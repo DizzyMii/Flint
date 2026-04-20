@@ -34,6 +34,7 @@ export type Tool<Input = unknown, Output = unknown> = {
   handler: (input: Input) => Promise<Output> | Output;
   permissions?: ToolPermissions;
   timeout?: number;
+  jsonSchema?: Record<string, unknown>;
 };
 
 export type Result<T, E = Error> = { ok: true; value: T } | { ok: false; error: E };

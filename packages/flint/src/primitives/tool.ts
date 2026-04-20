@@ -7,6 +7,7 @@ export type ToolSpec<Input, Output> = {
   handler: (input: Input) => Promise<Output> | Output;
   permissions?: ToolPermissions;
   timeout?: number;
+  jsonSchema?: Record<string, unknown>;
 };
 
 export function tool<Input, Output>(spec: ToolSpec<Input, Output>): Tool<Input, Output> {
@@ -17,5 +18,6 @@ export function tool<Input, Output>(spec: ToolSpec<Input, Output>): Tool<Input, 
     handler: spec.handler,
     ...(spec.permissions !== undefined ? { permissions: spec.permissions } : {}),
     ...(spec.timeout !== undefined ? { timeout: spec.timeout } : {}),
+    ...(spec.jsonSchema !== undefined ? { jsonSchema: spec.jsonSchema } : {}),
   };
 }
