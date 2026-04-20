@@ -10,21 +10,23 @@ export type Messages = {
 };
 
 export function messages(): Messages {
+  const store: Message[] = [];
   return {
-    push() {
-      throw new NotImplementedError('memory.messages.push');
+    push(m) {
+      store.push(m);
     },
-    slice() {
-      throw new NotImplementedError('memory.messages.slice');
+    slice(from, to) {
+      return store.slice(from, to);
     },
-    replace() {
-      throw new NotImplementedError('memory.messages.replace');
+    replace(index, m) {
+      if (index < 0 || index >= store.length) return;
+      store[index] = m;
     },
     all() {
-      throw new NotImplementedError('memory.messages.all');
+      return [...store];
     },
     clear() {
-      throw new NotImplementedError('memory.messages.clear');
+      store.length = 0;
     },
   };
 }
@@ -36,15 +38,16 @@ export type Scratchpad = {
 };
 
 export function scratchpad(): Scratchpad {
+  const store: string[] = [];
   return {
-    note() {
-      throw new NotImplementedError('memory.scratchpad.note');
+    note(text) {
+      store.push(text);
     },
     notes() {
-      throw new NotImplementedError('memory.scratchpad.notes');
+      return [...store];
     },
     clear() {
-      throw new NotImplementedError('memory.scratchpad.clear');
+      store.length = 0;
     },
   };
 }
