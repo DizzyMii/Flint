@@ -9,9 +9,13 @@ export type CompressCtx = {
 
 export type Transform = (messages: Message[], ctx: CompressCtx) => Promise<Message[]>;
 
-export function pipeline(..._transforms: Transform[]): Transform {
-  return async (_messages, _ctx) => {
-    throw new NotImplementedError('compress.pipeline');
+export function pipeline(...transforms: Transform[]): Transform {
+  return async (messages, ctx) => {
+    let current = messages;
+    for (const t of transforms) {
+      current = await t(current, ctx);
+    }
+    return current;
   };
 }
 
