@@ -19,11 +19,21 @@ export type Message =
   | { role: 'assistant'; content: string; toolCalls?: ToolCall[] }
   | { role: 'tool'; content: string; toolCallId: string };
 
+export type ToolPermissions = {
+  destructive?: boolean;
+  scopes?: string[];
+  network?: boolean;
+  filesystem?: boolean;
+  requireApproval?: boolean;
+};
+
 export type Tool<Input = unknown, Output = unknown> = {
   name: string;
   description: string;
   input: StandardSchemaV1<unknown, Input>;
   handler: (input: Input) => Promise<Output> | Output;
+  permissions?: ToolPermissions;
+  timeout?: number;
 };
 
 export type Result<T, E = Error> = { ok: true; value: T } | { ok: false; error: E };

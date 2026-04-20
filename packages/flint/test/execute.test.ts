@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { ParseError, ToolError } from '../src/errors.ts';
+import { ParseError, TimeoutError, ToolError } from '../src/errors.ts';
 import { execute } from '../src/primitives/execute.ts';
 import { tool } from '../src/primitives/tool.ts';
 import type { StandardSchemaV1 } from '../src/types.ts';
@@ -90,6 +90,59 @@ describe('execute', () => {
       handler: async (x) => x.n * 2,
     });
     const res = await execute(asyncAdder, { n: 3 });
+    expect(res.ok).toBe(true);
+    if (res.ok) {
+      expect(res.value).toBe(6);
+    }
+  });
+
+  it('enforces timeout on slow handlers', async () => {
+    const slow = tool({
+      name: 'slow',
+      description: 'takes too long',
+      input: numberSchema(),
+      timeout: 50,
+      handler: async () => {
+        await new Promise((r) => setTimeout(r, 200));
+        return 1;
+      },
+    });
+    const res = await execute(slow, { n: 0 });
+    expect(res.ok).toBe(false);
+    if (!res.ok) {
+      expect(res.error).toBeInstanceOf(TimeoutError);
+      if (res.error instanceof TimeoutError) {
+        expect(res.error.code).toBe('tool.timeout');
+      }
+    }
+  });
+
+  it('does not time out when handler is fast enough', async () => {
+    const fast = tool({
+      name: 'fast',
+      description: 'quick',
+      input: numberSchema(),
+      timeout: 200,
+      handler: async (x) => {
+        await new Promise((r) => setTimeout(r, 20));
+        return x.n + 1;
+      },
+    });
+    const res = await execute(fast, { n: 5 });
+    expect(res.ok).toBe(true);
+    if (res.ok) {
+      expect(res.value).toBe(6);
+    }
+  });
+
+  it('works without timeout (default behavior)', async () => {
+    const noTimeout = tool({
+      name: 'plain',
+      description: 'no timeout',
+      input: numberSchema(),
+      handler: async (x) => x.n * 2,
+    });
+    const res = await execute(noTimeout, { n: 3 });
     expect(res.ok).toBe(true);
     if (res.ok) {
       expect(res.value).toBe(6);
