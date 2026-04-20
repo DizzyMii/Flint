@@ -8,7 +8,13 @@
   "engines": { "node": ">=20" },
   "files": ["dist", "README.md", "LICENSE"],
   "exports": {
-    ".": { "types": "./dist/index.d.ts", "import": "./dist/index.js" }
+    ".": { "types": "./dist/index.d.ts", "import": "./dist/index.js" },
+    "./memory": { "types": "./dist/memory.d.ts", "import": "./dist/memory.js" },
+    "./rag": { "types": "./dist/rag.d.ts", "import": "./dist/rag.js" },
+    "./compress": { "types": "./dist/compress.d.ts", "import": "./dist/compress.js" },
+    "./recipes": { "types": "./dist/recipes.d.ts", "import": "./dist/recipes.js" },
+    "./budget": { "types": "./dist/budget.d.ts", "import": "./dist/budget.js" },
+    "./errors": { "types": "./dist/errors.d.ts", "import": "./dist/errors.js" }
   },
   "scripts": {
     "build": "tsup",
