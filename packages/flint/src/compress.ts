@@ -1,5 +1,4 @@
 import type { ProviderAdapter } from './adapter.ts';
-import { NotImplementedError } from './errors.ts';
 import type { Message } from './types.ts';
 
 export type CompressCtx = {
@@ -116,15 +115,53 @@ export type SummarizeOpts = {
   adapter: ProviderAdapter;
   model: string;
   keepLast?: number;
+  promptPrefix?: string;
 };
-export function summarize(_opts: SummarizeOpts): Transform {
-  return async () => {
-    throw new NotImplementedError('compress.summarize');
+
+const DEFAULT_SUMMARIZE_PREFIX =
+  'Summarize the following conversation concisely, preserving key facts, decisions, and user intent:';
+
+export function summarize(opts: SummarizeOpts): Transform {
+  const keepLast = opts.keepLast ?? 4;
+  const promptPrefix = opts.promptPrefix ?? DEFAULT_SUMMARIZE_PREFIX;
+
+  return async (messages) => {
+    if (!opts.when(messages)) return messages;
+    if (messages.length < keepLast + 2) return messages;
+
+    const toSummarize = messages.slice(0, messages.length - keepLast);
+    const toKeep = messages.slice(messages.length - keepLast);
+
+    let summary: string;
+    try {
+      const resp = await opts.adapter.call({
+        model: opts.model,
+        messages: [
+          { role: 'system', content: promptPrefix },
+          { role: 'user', content: JSON.stringify(toSummarize, null, 2) },
+        ],
+      });
+      summary = resp.message.content;
+    } catch {
+      // Fail-open: compression is best-effort
+      return messages;
+    }
+
+    return [
+      { role: 'system', content: `Summary of prior conversation: ${summary}` },
+      ...toKeep,
+    ];
   };
 }
 
 export function orderForCache(): Transform {
-  return async () => {
-    throw new NotImplementedError('compress.orderForCache');
+  return async (messages) => {
+    const systems: Message[] = [];
+    const rest: Message[] = [];
+    for (const msg of messages) {
+      if (msg.role === 'system') systems.push(msg);
+      else rest.push(msg);
+    }
+    return [...systems, ...rest];
   };
 }

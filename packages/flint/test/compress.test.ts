@@ -8,7 +8,7 @@ import {
   windowFirst,
   windowLast,
 } from '../src/compress.ts';
-import { NotImplementedError } from '../src/errors.ts';
+import { mockAdapter } from '../src/testing/mock-adapter.ts';
 import type { ContentPart, Message } from '../src/types.ts';
 
 describe('compress transforms', () => {
@@ -19,32 +19,6 @@ describe('compress transforms', () => {
     expect(typeof p).toBe('function');
     const result = await p(msgs, {});
     expect(result).toEqual(msgs);
-  });
-
-  const transforms = [
-    ['orderForCache', orderForCache()],
-  ] as const;
-
-  for (const [name, t] of transforms) {
-    it(`${name} is a transform function`, async () => {
-      expect(typeof t).toBe('function');
-      await expect(t(msgs, {})).rejects.toThrow(NotImplementedError);
-    });
-  }
-
-  it('summarize transform requires opts and stubs throw', async () => {
-    const t = summarize({
-      when: () => true,
-      adapter: {
-        name: 'x',
-        capabilities: {},
-        call: async () => ({}) as never,
-        stream: async function* () {},
-      },
-      model: 'x',
-    });
-    expect(typeof t).toBe('function');
-    await expect(t(msgs, {})).rejects.toThrow(NotImplementedError);
   });
 });
 
@@ -323,5 +297,173 @@ describe('windowFirst', () => {
     const copy = [...fixture];
     await t(fixture, {});
     expect(fixture).toEqual(copy);
+  });
+});
+
+describe('orderForCache', () => {
+  it('returns messages unchanged when no system messages', async () => {
+    const t = orderForCache();
+    const msgs: Message[] = [
+      { role: 'user', content: 'u1' },
+      { role: 'assistant', content: 'a1' },
+      { role: 'user', content: 'u2' },
+    ];
+    const out = await t(msgs, {});
+    expect(out).toEqual(msgs);
+  });
+
+  it('moves a single mid-conversation system message to front', async () => {
+    const t = orderForCache();
+    const msgs: Message[] = [
+      { role: 'user', content: 'u1' },
+      { role: 'assistant', content: 'a1' },
+      { role: 'system', content: 'sys' },
+      { role: 'user', content: 'u2' },
+    ];
+    const out = await t(msgs, {});
+    expect(out).toEqual([
+      { role: 'system', content: 'sys' },
+      { role: 'user', content: 'u1' },
+      { role: 'assistant', content: 'a1' },
+      { role: 'user', content: 'u2' },
+    ]);
+  });
+
+  it('preserves relative order of multiple system messages', async () => {
+    const t = orderForCache();
+    const msgs: Message[] = [
+      { role: 'user', content: 'u1' },
+      { role: 'system', content: 's1' },
+      { role: 'user', content: 'u2' },
+      { role: 'system', content: 's2' },
+    ];
+    const out = await t(msgs, {});
+    expect(out).toEqual([
+      { role: 'system', content: 's1' },
+      { role: 'system', content: 's2' },
+      { role: 'user', content: 'u1' },
+      { role: 'user', content: 'u2' },
+    ]);
+  });
+
+  it('preserves chronological order of non-system messages', async () => {
+    const t = orderForCache();
+    const msgs: Message[] = [
+      { role: 'assistant', content: 'a1' },
+      { role: 'user', content: 'u1' },
+      { role: 'system', content: 'sys' },
+      { role: 'assistant', content: 'a2' },
+    ];
+    const out = await t(msgs, {});
+    expect(out).toEqual([
+      { role: 'system', content: 'sys' },
+      { role: 'assistant', content: 'a1' },
+      { role: 'user', content: 'u1' },
+      { role: 'assistant', content: 'a2' },
+    ]);
+  });
+
+  it('does not mutate input', async () => {
+    const t = orderForCache();
+    const msgs: Message[] = [
+      { role: 'user', content: 'u1' },
+      { role: 'system', content: 'sys' },
+    ];
+    const copy = [...msgs];
+    await t(msgs, {});
+    expect(msgs).toEqual(copy);
+  });
+});
+
+describe('summarize', () => {
+  const makeAdapter = (summary: string) =>
+    mockAdapter({
+      onCall: () => ({
+        message: { role: 'assistant', content: summary },
+        usage: { input: 100, output: 20 },
+        stopReason: 'end',
+      }),
+    });
+
+  const largeFixture: Message[] = [
+    { role: 'system', content: 'be helpful' },
+    { role: 'user', content: 'first question' },
+    { role: 'assistant', content: 'first answer' },
+    { role: 'user', content: 'second question' },
+    { role: 'assistant', content: 'second answer' },
+    { role: 'user', content: 'third question' },
+    { role: 'assistant', content: 'third answer' },
+    { role: 'user', content: 'latest question' },
+  ];
+
+  it('returns messages unchanged when when() returns false', async () => {
+    const adapter = makeAdapter('unused');
+    const t = summarize({ when: () => false, adapter, model: 'm' });
+    const out = await t(largeFixture, {});
+    expect(out).toEqual(largeFixture);
+    expect(adapter.calls).toHaveLength(0);
+  });
+
+  it('returns messages unchanged when not enough messages to summarize', async () => {
+    const adapter = makeAdapter('unused');
+    const t = summarize({ when: () => true, adapter, model: 'm', keepLast: 4 });
+    const small: Message[] = [
+      { role: 'user', content: 'only 1' },
+      { role: 'assistant', content: 'only 2' },
+    ];
+    const out = await t(small, {});
+    expect(out).toEqual(small);
+    expect(adapter.calls).toHaveLength(0);
+  });
+
+  it('summarizes when triggered, preserving last N messages verbatim', async () => {
+    const adapter = makeAdapter('Discussed X, Y, Z');
+    const t = summarize({ when: () => true, adapter, model: 'm', keepLast: 3 });
+    const out = await t(largeFixture, {});
+
+    expect(adapter.calls).toHaveLength(1);
+    // First message is the summary
+    expect(out[0]?.role).toBe('system');
+    expect(typeof out[0]?.content).toBe('string');
+    if (typeof out[0]?.content === 'string') {
+      expect(out[0].content).toContain('Summary of prior conversation');
+      expect(out[0].content).toContain('Discussed X, Y, Z');
+    }
+    // Last 3 preserved verbatim
+    expect(out.slice(1)).toEqual(largeFixture.slice(-3));
+  });
+
+  it('uses default keepLast of 4 when not specified', async () => {
+    const adapter = makeAdapter('sum');
+    const t = summarize({ when: () => true, adapter, model: 'm' });
+    const out = await t(largeFixture, {});
+    // 1 summary + last 4 verbatim = 5 messages
+    expect(out).toHaveLength(5);
+    expect(out.slice(1)).toEqual(largeFixture.slice(-4));
+  });
+
+  it('returns messages unchanged on adapter error (fail-open)', async () => {
+    const adapter = mockAdapter({
+      onCall: () => {
+        throw new Error('network down');
+      },
+    });
+    const t = summarize({ when: () => true, adapter, model: 'm' });
+    const out = await t(largeFixture, {});
+    expect(out).toEqual(largeFixture);
+  });
+
+  it('honors custom promptPrefix', async () => {
+    const adapter = makeAdapter('result');
+    const t = summarize({
+      when: () => true,
+      adapter,
+      model: 'm',
+      promptPrefix: 'Custom prefix:',
+    });
+    await t(largeFixture, {});
+    const sentMessages = adapter.calls[0]?.messages ?? [];
+    const sysMsg = sentMessages.find((m) => m.role === 'system');
+    expect(sysMsg?.content).toBe('Custom prefix:');
   });
 });
