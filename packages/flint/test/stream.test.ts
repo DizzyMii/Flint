@@ -3,6 +3,8 @@ import { stream } from '../src/primitives/stream.ts';
 import { mockAdapter } from '../src/testing/mock-adapter.ts';
 import type { StreamChunk } from '../src/types.ts';
 import type { Message } from '../src/types.ts';
+import { budget } from '../src/budget.ts';
+import { BudgetExhausted } from '../src/errors.ts';
 
 const msg: Message[] = [{ role: 'user', content: 'hi' }];
 
@@ -89,5 +91,27 @@ describe('stream', () => {
         // unreachable
       }
     }).rejects.toThrow(TypeError);
+  });
+
+  it('propagates BudgetExhausted when usage chunk exceeds budget', async () => {
+    const adapter = mockAdapter({
+      onCall: () => ({
+        message: { role: 'assistant', content: 'x' },
+        usage: { input: 50, output: 50 },
+        stopReason: 'end',
+      }),
+      onStream: async function* () {
+        yield { type: 'text', delta: 'hi' };
+        yield { type: 'usage', usage: { input: 60, output: 60 } };
+        yield { type: 'end', reason: 'end' };
+      },
+    });
+    const b = budget({ maxTokens: 100 });
+    const iter = stream({ adapter, model: 'm', messages: msg, budget: b });
+    await expect(async () => {
+      for await (const _chunk of iter) {
+        // drain until throw
+      }
+    }).rejects.toThrow(BudgetExhausted);
   });
 });
