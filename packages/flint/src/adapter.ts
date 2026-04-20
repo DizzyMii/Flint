@@ -1,5 +1,7 @@
 import type { Message, StandardSchemaV1, StopReason, StreamChunk, Tool, Usage } from './types.ts';
 
+export type { StreamChunk };
+
 export type NormalizedRequest = {
   model: string;
   messages: Message[];

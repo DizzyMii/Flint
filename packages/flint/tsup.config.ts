@@ -10,6 +10,7 @@ export default defineConfig({
     'src/recipes.ts',
     'src/budget.ts',
     'src/errors.ts',
+    'src/testing/mock-adapter.ts',
   ],
   format: ['esm'],
   dts: true,

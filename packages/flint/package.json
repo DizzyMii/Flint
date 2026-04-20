@@ -14,7 +14,8 @@
     "./compress": { "types": "./dist/compress.d.ts", "import": "./dist/compress.js" },
     "./recipes": { "types": "./dist/recipes.d.ts", "import": "./dist/recipes.js" },
     "./budget": { "types": "./dist/budget.d.ts", "import": "./dist/budget.js" },
-    "./errors": { "types": "./dist/errors.d.ts", "import": "./dist/errors.js" }
+    "./errors": { "types": "./dist/errors.d.ts", "import": "./dist/errors.js" },
+    "./testing": { "types": "./dist/testing/mock-adapter.d.ts", "import": "./dist/testing/mock-adapter.js" }
   },
   "scripts": {
     "build": "tsup",
