@@ -20,8 +20,22 @@ export function pipeline(...transforms: Transform[]): Transform {
 }
 
 export function dedup(): Transform {
-  return async () => {
-    throw new NotImplementedError('compress.dedup');
+  return async (messages) => {
+    const seen = new Set<string>();
+    const result: Message[] = [];
+    for (const msg of messages) {
+      if (msg.role === 'system') {
+        result.push(msg);
+        continue;
+      }
+      const contentKey =
+        typeof msg.content === 'string' ? msg.content : JSON.stringify(msg.content);
+      const key = `${msg.role}:${contentKey}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      result.push(msg);
+    }
+    return result;
   };
 }
 
