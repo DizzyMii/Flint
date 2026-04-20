@@ -34,9 +34,7 @@ export function budget(limits: BudgetLimits): Budget {
     limits.maxTokens === undefined &&
     limits.maxDollars === undefined
   ) {
-    throw new TypeError(
-      'budget: at least one of maxSteps, maxTokens, or maxDollars must be set',
-    );
+    throw new TypeError('budget: at least one of maxSteps, maxTokens, or maxDollars must be set');
   }
 
   let stepsUsed = 0;

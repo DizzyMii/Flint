@@ -1,10 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
+import type { NormalizedResponse } from '../src/adapter.ts';
 import { agent } from '../src/agent.ts';
 import { budget } from '../src/budget.ts';
 import { BudgetExhausted, FlintError } from '../src/errors.ts';
 import { tool } from '../src/primitives/tool.ts';
 import { mockAdapter } from '../src/testing/mock-adapter.ts';
-import type { NormalizedResponse } from '../src/adapter.ts';
 import type { Message, StandardSchemaV1 } from '../src/types.ts';
 
 const textResponse = (content: string): NormalizedResponse => ({
@@ -71,7 +71,14 @@ describe('agent', () => {
       textResponse('done'),
     ];
     let i = 0;
-    const adapter = mockAdapter({ onCall: () => responses[i++]! });
+    const adapter = mockAdapter({
+      onCall: () => {
+        const resp = responses[i];
+        if (!resp) throw new Error('Response not found');
+        i += 1;
+        return resp;
+      },
+    });
     const res = await agent({
       adapter,
       model: 'm',
@@ -93,7 +100,14 @@ describe('agent', () => {
       textResponse('apology'),
     ];
     let i = 0;
-    const adapter = mockAdapter({ onCall: () => responses[i++]! });
+    const adapter = mockAdapter({
+      onCall: () => {
+        const resp = responses[i];
+        if (!resp) throw new Error('Response not found');
+        i += 1;
+        return resp;
+      },
+    });
     const res = await agent({
       adapter,
       model: 'm',
@@ -115,7 +129,14 @@ describe('agent', () => {
       textResponse('recovered'),
     ];
     let i = 0;
-    const adapter = mockAdapter({ onCall: () => responses[i++]! });
+    const adapter = mockAdapter({
+      onCall: () => {
+        const resp = responses[i];
+        if (!resp) throw new Error('Response not found');
+        i += 1;
+        return resp;
+      },
+    });
     const res = await agent({
       adapter,
       model: 'm',
@@ -176,7 +197,14 @@ describe('agent', () => {
       textResponse('done'),
     ];
     let i = 0;
-    const adapter = mockAdapter({ onCall: () => responses[i++]! });
+    const adapter = mockAdapter({
+      onCall: () => {
+        const resp = responses[i];
+        if (!resp) throw new Error('Response not found');
+        i += 1;
+        return resp;
+      },
+    });
     const onStep = vi.fn();
     await agent({
       adapter,
@@ -201,7 +229,14 @@ describe('agent', () => {
       textResponse('ok'),
     ];
     let i = 0;
-    const adapter = mockAdapter({ onCall: () => responses[i++]! });
+    const adapter = mockAdapter({
+      onCall: () => {
+        const resp = responses[i];
+        if (!resp) throw new Error('Response not found');
+        i += 1;
+        return resp;
+      },
+    });
     await agent({
       adapter,
       model: 'm',
@@ -244,7 +279,14 @@ describe('agent', () => {
       textResponse('ok'),
     ];
     let i = 0;
-    const adapter = mockAdapter({ onCall: () => responses[i++]! });
+    const adapter = mockAdapter({
+      onCall: () => {
+        const resp = responses[i];
+        if (!resp) throw new Error('Response not found');
+        i += 1;
+        return resp;
+      },
+    });
     await agent({
       adapter,
       model: 'm',
@@ -265,7 +307,14 @@ describe('agent', () => {
       textResponse('done'),
     ];
     let i = 0;
-    const adapter = mockAdapter({ onCall: () => responses[i++]! });
+    const adapter = mockAdapter({
+      onCall: () => {
+        const resp = responses[i];
+        if (!resp) throw new Error('Response not found');
+        i += 1;
+        return resp;
+      },
+    });
     const res = await agent({
       adapter,
       model: 'm',

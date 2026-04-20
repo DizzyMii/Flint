@@ -2,8 +2,8 @@ import type { ProviderAdapter } from './adapter.ts';
 import type { Budget } from './budget.ts';
 import type { Transform } from './compress.ts';
 import { FlintError } from './errors.ts';
-import { execute } from './primitives/execute.ts';
 import { call } from './primitives/call.ts';
+import { execute } from './primitives/execute.ts';
 import type { Logger, Message, Result, Tool, ToolCall, Usage } from './types.ts';
 
 export type Step = {
@@ -24,9 +24,7 @@ export type AgentOutput = {
 
 export type ToolsCtx = { messages: Message[]; step: number };
 
-export type ToolsParam =
-  | Tool[]
-  | ((ctx: ToolsCtx) => Tool[] | Promise<Tool[]>);
+export type ToolsParam = Tool[] | ((ctx: ToolsCtx) => Tool[] | Promise<Tool[]>);
 
 export type AgentOptions = {
   adapter: ProviderAdapter;
@@ -41,10 +39,7 @@ export type AgentOptions = {
   signal?: AbortSignal;
 };
 
-async function runToolCall(
-  tc: ToolCall,
-  tools: Tool[],
-): Promise<Message & { role: 'tool' }> {
+async function runToolCall(tc: ToolCall, tools: Tool[]): Promise<Message & { role: 'tool' }> {
   const tool = tools.find((t) => t.name === tc.name);
   if (!tool) {
     return {
@@ -56,15 +51,13 @@ async function runToolCall(
   const execResult = await execute(tool, tc.arguments);
   if (execResult.ok) {
     const content =
-      typeof execResult.value === 'string'
-        ? execResult.value
-        : JSON.stringify(execResult.value);
+      typeof execResult.value === 'string' ? execResult.value : JSON.stringify(execResult.value);
     return { role: 'tool', content, toolCallId: tc.id };
   }
   // Include both the wrapper message and the underlying cause
   let errorMsg = execResult.error.message;
   if (execResult.error.cause instanceof Error) {
-    errorMsg += ': ' + execResult.error.cause.message;
+    errorMsg += `: ${execResult.error.cause.message}`;
   }
   return {
     role: 'tool',
@@ -144,9 +137,7 @@ export async function agent(options: AgentOptions): Promise<Result<AgentOutput>>
 
     // Execute tool calls in parallel
     const toolCalls = message.toolCalls ?? [];
-    const toolResults = await Promise.all(
-      toolCalls.map((tc) => runToolCall(tc, tools)),
-    );
+    const toolResults = await Promise.all(toolCalls.map((tc) => runToolCall(tc, tools)));
 
     messages.push(...toolResults);
 

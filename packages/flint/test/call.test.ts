@@ -1,12 +1,10 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, expectTypeOf, it } from 'vitest';
 import type { NormalizedResponse } from '../src/adapter.ts';
-import { AdapterError, ParseError, ValidationError } from '../src/errors.ts';
+import { budget } from '../src/budget.ts';
+import { AdapterError, BudgetExhausted, ParseError, ValidationError } from '../src/errors.ts';
 import { call } from '../src/primitives/call.ts';
 import { mockAdapter } from '../src/testing/mock-adapter.ts';
 import type { Message, StandardSchemaV1 } from '../src/types.ts';
-import { budget } from '../src/budget.ts';
-import { BudgetExhausted } from '../src/errors.ts';
-import { expectTypeOf } from 'vitest';
 
 const textResponse = (content: string, stop: 'end' | 'tool_call' = 'end'): NormalizedResponse => ({
   message: { role: 'assistant', content },
@@ -185,7 +183,10 @@ describe('call', () => {
     type MyShape = { n: number };
     const goodSchema = jsonSchema<MyShape>(
       (v): v is MyShape =>
-        typeof v === 'object' && v !== null && 'n' in v && typeof (v as { n: unknown }).n === 'number',
+        typeof v === 'object' &&
+        v !== null &&
+        'n' in v &&
+        typeof (v as { n: unknown }).n === 'number',
     );
     // Valid: schema returns MyShape, call<MyShape> accepts it
     expectTypeOf(call<MyShape>)
