@@ -45,19 +45,21 @@ function messages(): Messages;
 
 ```ts
 import { messages } from 'flint/memory';
-import { call } from 'flint/call';
+import { call } from 'flint';
+import { anthropicAdapter } from '@flint/adapter-anthropic';
 
+const adapter = anthropicAdapter({ apiKey: process.env.ANTHROPIC_API_KEY! });
 const history = messages();
 
 // First turn
 history.push({ role: 'user', content: 'Hello!' });
-const reply = await call({ messages: history.all(), model: 'gpt-4o' });
-history.push({ role: 'assistant', content: reply.content });
+const r1 = await call({ adapter, messages: history.all(), model: 'claude-haiku-4-5' });
+if (r1.ok) history.push(r1.value.message);
 
 // Second turn — full history is passed automatically
 history.push({ role: 'user', content: 'What did I just say?' });
-const reply2 = await call({ messages: history.all(), model: 'gpt-4o' });
-history.push({ role: 'assistant', content: reply2.content });
+const r2 = await call({ adapter, messages: history.all(), model: 'claude-haiku-4-5' });
+if (r2.ok) history.push(r2.value.message);
 ```
 
 **When to use:** Multi-turn chat loops where you want explicit control over every message. The `replace()` method is especially useful when you need to retrofit a tool-call result into a prior turn rather than appending it.
@@ -92,8 +94,10 @@ function scratchpad(): Scratchpad;
 
 ```ts
 import { scratchpad } from 'flint/memory';
-import { call } from 'flint/call';
+import { call } from 'flint';
+import { anthropicAdapter } from '@flint/adapter-anthropic';
 
+const adapter = anthropicAdapter({ apiKey: process.env.ANTHROPIC_API_KEY! });
 const pad = scratchpad();
 
 // Agent accumulates observations across tool calls
@@ -103,13 +107,15 @@ pad.note('User previously mentioned a $700 budget constraint.');
 
 // Inject notes into the final prompt
 const context = pad.notes().join('\n');
-const answer = await call({
+const result = await call({
+  adapter,
   messages: [
     { role: 'system', content: `Working notes:\n${context}` },
     { role: 'user', content: 'What should I do?' },
   ],
-  model: 'gpt-4o',
+  model: 'claude-haiku-4-5',
 });
+if (result.ok) console.log(result.value.message.content);
 ```
 
 **When to use:** Agentic loops where intermediate steps produce context that should influence the final response but shouldn't be part of the user-visible conversation history.
@@ -162,23 +168,28 @@ function conversationMemory(opts: ConversationMemoryOpts): ConversationMemory;
 
 ```ts
 import { conversationMemory } from 'flint/memory';
-import { call } from 'flint/call';
+import { call, agent } from 'flint';
+import { anthropicAdapter } from '@flint/adapter-anthropic';
+
+const adapter = anthropicAdapter({ apiKey: process.env.ANTHROPIC_API_KEY! });
 
 // Build a summarizer using any LLM call
 async function summarize(msgs: Message[]): Promise<string> {
   const transcript = msgs
-    .map((m) => `${m.role}: ${m.content}`)
+    .map((m) => `${m.role}: ${typeof m.content === 'string' ? m.content : '[content]'}`)
     .join('\n');
   const result = await call({
+    adapter,
     messages: [
       {
         role: 'user',
         content: `Summarize this conversation in 2-3 sentences:\n\n${transcript}`,
       },
     ],
-    model: 'gpt-4o-mini',
+    model: 'claude-haiku-4-5',
   });
-  return result.content as string;
+  if (!result.ok) throw result.error;
+  return result.value.message.content as string;
 }
 
 const mem = conversationMemory({
@@ -187,13 +198,13 @@ const mem = conversationMemory({
   summarizer: summarize,
 });
 
-// Use with agent()
-import { agent } from 'flint/agent';
-
-const myAgent = agent({
-  model: 'gpt-4o',
-  memory: mem,
-  // ...
+// Pass mem.messages() into the agent each turn
+const out = await agent({
+  adapter,
+  model: 'claude-opus-4-7',
+  messages: mem.messages(), // the rolling window, possibly with a leading summary
+  tools,
+  budget: budget({ maxSteps: 10 }),
 });
 ```
 

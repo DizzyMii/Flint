@@ -13,18 +13,21 @@ npm install @flint/adapter-anthropic
 
 ```ts
 import { anthropicAdapter } from '@flint/adapter-anthropic';
-import { FlintClient } from 'flint';
+import { call } from 'flint';
 
-const client = new FlintClient({
-  adapter: anthropicAdapter({
-    apiKey: process.env.ANTHROPIC_API_KEY!,
-  }),
+const adapter = anthropicAdapter({
+  apiKey: process.env.ANTHROPIC_API_KEY!,
 });
 
-const response = await client.call({
+const result = await call({
+  adapter,
   model: 'claude-opus-4-5',
   messages: [{ role: 'user', content: 'Hello!' }],
 });
+
+if (result.ok) {
+  console.log(result.value.message.content);
+}
 ```
 
 ## Constructor Options
@@ -51,7 +54,8 @@ This covers the most common cache-worthy content. Tokens reused from cache appea
 in `usage.cached` on the response.
 
 ```ts
-const response = await client.call({
+const result = await call({
+  adapter,
   model: 'claude-opus-4-5',
   messages: [
     { role: 'system', content: longSystemPrompt },
@@ -60,7 +64,9 @@ const response = await client.call({
   cache: 'auto',   // place ephemeral breakpoints automatically
 });
 
-console.log(response.usage.cached); // number of tokens served from cache
+if (result.ok) {
+  console.log(result.value.usage.cached); // number of tokens served from cache
+}
 ```
 
 Caching is most effective for long, stable system prompts and large tool lists that

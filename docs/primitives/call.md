@@ -33,7 +33,7 @@ type CallOptions<T = unknown> = {
   maxTokens?: number;
   temperature?: number;
   stopSequences?: string[];
-  cache?: boolean;
+  cache?: 'auto' | 'off';
 
   // Optional — observability
   logger?: Logger;
@@ -53,7 +53,7 @@ type CallOptions<T = unknown> = {
 | `maxTokens` | `number` | No | Maximum response tokens |
 | `temperature` | `number` | No | Sampling temperature |
 | `stopSequences` | `string[]` | No | Stop generation at these sequences |
-| `cache` | `boolean` | No | Enable prompt caching (adapter-specific) |
+| `cache` | `'auto' \| 'off'` | No | Prompt caching mode — `'auto'` places cache breakpoints automatically, `'off'` disables them |
 | `logger` | `Logger` | No | Debug/info/warn/error logger |
 | `signal` | `AbortSignal` | No | Cancellation signal |
 

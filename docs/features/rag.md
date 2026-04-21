@@ -206,11 +206,13 @@ This example shows the complete flow: chunk a document, embed the chunks, store 
 
 ```ts
 import { chunk, memoryStore, retrieve } from 'flint/rag';
-import { call } from 'flint/call';
+import { call } from 'flint';
 import type { Embedder } from 'flint/rag';
+import { anthropicAdapter } from '@flint/adapter-anthropic';
 import OpenAI from 'openai';
 
-// 1. Set up embedder
+// 1. Set up adapter and embedder
+const adapter = anthropicAdapter({ apiKey: process.env.ANTHROPIC_API_KEY! });
 const openai = new OpenAI();
 const embedder: Embedder = {
   dimensions: 1536,
@@ -255,6 +257,7 @@ async function answer(question: string): Promise<string> {
   const context = matches.map((m) => m.text).join('\n\n');
 
   const result = await call({
+    adapter,
     messages: [
       {
         role: 'system',
@@ -262,10 +265,11 @@ async function answer(question: string): Promise<string> {
       },
       { role: 'user', content: question },
     ],
-    model: 'gpt-4o',
+    model: 'claude-haiku-4-5',
   });
 
-  return result.content as string;
+  if (!result.ok) throw result.error;
+  return result.value.message.content as string;
 }
 
 console.log(await answer('What is Flint?'));

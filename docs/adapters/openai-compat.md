@@ -4,6 +4,12 @@ A generic adapter for any provider that exposes an OpenAI-compatible Chat Comple
 API. Works out of the box with OpenAI, Groq, Together AI, DeepSeek, Fireworks, Mistral,
 Perplexity, Ollama (local), and any other server that speaks the same wire format.
 
+:::warning v0 stub
+`@flint/adapter-openai-compat` is not yet fully implemented. Calling it currently
+throws `NotImplementedError`. Track progress in the repository — this adapter is a
+priority for the next release.
+:::
+
 ## Install
 
 ```bash
@@ -16,57 +22,66 @@ npm install @flint/adapter-openai-compat
 
 ```ts
 import { openaiCompatAdapter } from '@flint/adapter-openai-compat';
-import { FlintClient } from 'flint';
+import { call } from 'flint';
 
-const client = new FlintClient({
-  adapter: openaiCompatAdapter({
-    apiKey: process.env.OPENAI_API_KEY,
-    baseUrl: 'https://api.openai.com/v1',
-  }),
+const adapter = openaiCompatAdapter({
+  apiKey: process.env.OPENAI_API_KEY,
+  baseUrl: 'https://api.openai.com/v1',
 });
 
-const response = await client.call({
+const result = await call({
+  adapter,
   model: 'gpt-4o',
   messages: [{ role: 'user', content: 'Hello!' }],
 });
+
+if (result.ok) {
+  console.log(result.value.message.content);
+}
 ```
 
 ### Groq
 
 ```ts
 import { openaiCompatAdapter } from '@flint/adapter-openai-compat';
-import { FlintClient } from 'flint';
+import { call } from 'flint';
 
-const client = new FlintClient({
-  adapter: openaiCompatAdapter({
-    apiKey: process.env.GROQ_API_KEY,
-    baseUrl: 'https://api.groq.com/openai/v1',
-  }),
+const adapter = openaiCompatAdapter({
+  apiKey: process.env.GROQ_API_KEY,
+  baseUrl: 'https://api.groq.com/openai/v1',
 });
 
-const response = await client.call({
+const result = await call({
+  adapter,
   model: 'llama-3.3-70b-versatile',
   messages: [{ role: 'user', content: 'Hello!' }],
 });
+
+if (result.ok) {
+  console.log(result.value.message.content);
+}
 ```
 
 ### Ollama (local)
 
 ```ts
 import { openaiCompatAdapter } from '@flint/adapter-openai-compat';
-import { FlintClient } from 'flint';
+import { call } from 'flint';
 
-const client = new FlintClient({
-  adapter: openaiCompatAdapter({
-    // No apiKey required for local Ollama
-    baseUrl: 'http://localhost:11434/v1',
-  }),
+const adapter = openaiCompatAdapter({
+  // No apiKey required for local Ollama
+  baseUrl: 'http://localhost:11434/v1',
 });
 
-const response = await client.call({
+const result = await call({
+  adapter,
   model: 'llama3.2',
   messages: [{ role: 'user', content: 'Hello!' }],
 });
+
+if (result.ok) {
+  console.log(result.value.message.content);
+}
 ```
 
 ## Constructor Options

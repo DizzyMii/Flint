@@ -26,7 +26,7 @@ type StreamOptions = {
   maxTokens?: number;
   temperature?: number;
   stopSequences?: string[];
-  cache?: boolean;
+  cache?: 'auto' | 'off';
   logger?: Logger;
   signal?: AbortSignal;
 };

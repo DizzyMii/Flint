@@ -39,17 +39,9 @@ const tokens = count(messages, 'claude-opus-4-7');
 console.log(tokens); // approximate count
 ```
 
-## approxCount
+## Heuristic fallback
 
-When you only need a rough estimate without an adapter:
-
-```ts
-import { approxCount } from 'flint';
-
-const n = approxCount(messages);
-```
-
-`approxCount` uses `chars / 4` as a heuristic. It is fast and has no dependencies, but is not accurate for all languages and models.
+When no adapter is provided, `count()` internally uses a `chars / 4` heuristic. This is fast and dependency-free, but not accurate for all languages and models. The heuristic is applied automatically — there is no separate export for it.
 
 ## See also
 

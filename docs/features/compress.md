@@ -47,7 +47,7 @@ const res = await call({ ..., compress });
 
 ### dedup()
 
-Remove consecutive duplicate messages (same role + content). System messages are always kept.
+Remove duplicate messages (same role + content). System messages are always kept.
 
 ```ts
 dedup(): Transform
@@ -87,13 +87,23 @@ Reorder messages to maximize prompt cache hit rate (system messages first, then 
 orderForCache(): Transform
 ```
 
-### summarize()
+### summarize(opts)
 
-Summarize older messages to reduce history length. Requires a `call`-compatible context in `CompressCtx`. This is a stub in core — see [Recipes → summarize](/features/recipes) for a full implementation.
+Summarize older messages to reduce history length using an LLM call.
 
 ```ts
-summarize(): Transform
+type SummarizeOpts = {
+  when: (messages: Message[]) => boolean;
+  adapter: ProviderAdapter;
+  model: string;
+  keepLast?: number;       // default: 4
+  promptPrefix?: string;   // override the summarization prompt
+};
+
+summarize(opts: SummarizeOpts): Transform
 ```
+
+`when` controls the trigger condition. `keepLast` controls how many recent messages are preserved in full after summarization.
 
 ## Example — full pipeline
 
