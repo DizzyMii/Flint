@@ -9,3 +9,6 @@ coverage/
 .vitest-cache/
 .tsbuildinfo
 553e9d76/
+docs/.vitepress/dist
+docs/.vitepress/cache
+.superpowers/
