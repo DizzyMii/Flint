@@ -171,6 +171,8 @@ if (out.ok) console.log(out.value.message.content); // "579"
 
 ## Flint vs LangChain
 
+> For a full narrative comparison covering philosophy, dependencies, error handling, streaming, budget enforcement, safety, and prompt caching, see the **[Flint vs LangChain](https://dizzymii.github.io/Flint/guide/vs-langchain)** guide.
+
 LangChain models everything as a class hierarchy — LLMs, chains, tools, and agents are objects you instantiate and compose. You learn LangChain's abstractions, then use them to talk to models. Flint is plain async functions: `call`, `tool`, `agent`. You learn the provider API once; Flint adds thin, well-typed helpers on top. LangChain's modular package system means installing 3+ packages with dozens of transitive dependencies per provider; Flint has one runtime dependency (`@standard-schema/spec`). Where LangChain's executor surfaces errors as thrown exceptions, Flint returns `Result<T>` — no try/catch at call sites.
 
 ### Install
@@ -291,13 +293,18 @@ if (out.ok) console.log(out.value.message.content); // "579"
 
 ## Documentation
 
-Full documentation at **[dizzymii.github.io/flint](https://dizzymii.github.io/flint)**:
+Full documentation at **[dizzymii.github.io/Flint](https://dizzymii.github.io/Flint)**:
 
-- [Guide](https://dizzymii.github.io/flint/guide/) — installation, quick start, stability notes
-- [Primitives](https://dizzymii.github.io/flint/primitives/call) — `call`, `stream`, `validate`, `tool`, `execute`, `count`, `agent`
-- [Features](https://dizzymii.github.io/flint/features/budget) — budget, compress, memory, RAG, recipes, safety, graph
-- [Adapters](https://dizzymii.github.io/flint/adapters/anthropic) — Anthropic, OpenAI-compatible, custom
-- [Examples](https://dizzymii.github.io/flint/examples/basic-call) — runnable code examples
+- [Guide](https://dizzymii.github.io/Flint/guide/) — installation, quick start, v0 status
+- [Flint vs LangChain](https://dizzymii.github.io/Flint/guide/vs-langchain) — full narrative comparison
+- [Testing](https://dizzymii.github.io/Flint/guide/testing) — mockAdapter, scriptedAdapter, testing patterns
+- [FAQ](https://dizzymii.github.io/Flint/guide/faq) — RAG, vector search, design decisions, common questions
+- [Primitives](https://dizzymii.github.io/Flint/primitives/call) — `call`, `stream`, `validate`, `tool`, `execute`, `count`, `agent`
+- [Features](https://dizzymii.github.io/Flint/features/budget) — budget, compress, memory, RAG, recipes, safety, graph
+- [Adapters](https://dizzymii.github.io/Flint/adapters/anthropic) — Anthropic, OpenAI-compatible, custom
+- [Examples](https://dizzymii.github.io/Flint/examples/basic-call) — basic call, tools, agent, streaming, RAG, multi-agent, memory, graph
+- [Landlord](https://dizzymii.github.io/Flint/landlord/) — `@flint/landlord` multi-agent orchestration
+- [Reference](https://dizzymii.github.io/Flint/reference/errors) — error types catalog
 
 ## Contributing
 

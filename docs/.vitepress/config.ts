@@ -19,6 +19,8 @@ export default defineConfig({
       { text: 'Features', link: '/features/budget' },
       { text: 'Adapters', link: '/adapters/anthropic' },
       { text: 'Examples', link: '/examples/basic-call' },
+      { text: 'Landlord', link: '/landlord/' },
+      { text: 'Reference', link: '/reference/errors' },
       {
         text: 'v0',
         items: [
@@ -39,6 +41,9 @@ export default defineConfig({
             { text: 'What is Flint?', link: '/guide/' },
             { text: 'Installation', link: '/guide/installation' },
             { text: 'Quick Start', link: '/guide/quick-start' },
+            { text: 'Flint vs LangChain', link: '/guide/vs-langchain' },
+            { text: 'Testing', link: '/guide/testing' },
+            { text: 'FAQ', link: '/guide/faq' },
             { text: 'v0 Status', link: '/guide/v0-status' },
           ],
         },
@@ -90,6 +95,32 @@ export default defineConfig({
             { text: 'Agent Loop', link: '/examples/agent' },
             { text: 'Streaming', link: '/examples/streaming' },
             { text: 'ReAct Pattern', link: '/examples/react-pattern' },
+            { text: 'RAG Pipeline', link: '/examples/rag-pipeline' },
+            { text: 'Multi-Agent', link: '/examples/multi-agent' },
+            { text: 'Tool Approval', link: '/examples/tool-approval' },
+            { text: 'Memory Agent', link: '/examples/memory-agent' },
+            { text: 'Graph Workflow', link: '/examples/graph-workflow' },
+          ],
+        },
+      ],
+      '/landlord/': [
+        {
+          text: 'Landlord',
+          items: [
+            { text: 'Overview', link: '/landlord/' },
+            { text: 'Contracts', link: '/landlord/contract' },
+            { text: 'decompose()', link: '/landlord/decompose' },
+            { text: 'orchestrate()', link: '/landlord/orchestrate' },
+            { text: 'runTenant()', link: '/landlord/tenant' },
+            { text: 'Built-in Tools', link: '/landlord/tools' },
+          ],
+        },
+      ],
+      '/reference/': [
+        {
+          text: 'Reference',
+          items: [
+            { text: 'Error Types', link: '/reference/errors' },
           ],
         },
       ],
