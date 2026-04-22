@@ -5,10 +5,11 @@
 <p align="center">Token-efficient agentic TypeScript runtime</p>
 
 <p align="center">
-  <a href="https://img.shields.io/badge/version-v0-orange"><img src="https://img.shields.io/badge/version-v0-orange" alt="v0"></a>
+  <a href="https://www.npmjs.com/package/flint"><img src="https://img.shields.io/npm/v/flint?color=blue&label=npm" alt="npm version"></a>
+  <a href="https://github.com/DizzyMii/flint/actions/workflows/ci.yml"><img src="https://github.com/DizzyMii/flint/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <a href="https://img.shields.io/badge/license-MIT-blue"><img src="https://img.shields.io/badge/license-MIT-blue" alt="MIT"></a>
-  <a href="https://img.shields.io/badge/node-%E2%89%A520-brightgreen"><img src="https://img.shields.io/badge/node-%E2%89%A520-brightgreen" alt="node ≥20"></a>
-  <a href="https://img.shields.io/badge/TypeScript-5.7-blue"><img src="https://img.shields.io/badge/TypeScript-5.7-blue" alt="TypeScript"></a>
+  <a href="https://img.shields.io/badge/node-%E2%89%A520-brightgreen"><img src="https://img.shields.io/badge/node-%E2%89%A520-brightgreen" alt="node >=20"></a>
+  <a href="https://img.shields.io/badge/TypeScript-5.7-blue"><img src="https://img.shields.io/badge/TypeScript-5.7-blue" alt="TypeScript 5.7"></a>
 </p>
 
 <p align="center">
@@ -19,8 +20,6 @@
 
 ---
 
-> **v0 · under development · not yet published to npm**
-
 Six primitives. One agent loop. No magic. **Flint** gives you well-typed building blocks for AI agents in TypeScript — and stays out of the way. JavaScript is the runtime; Flint gives you the tools.
 
 ## Install
@@ -28,9 +27,6 @@ Six primitives. One agent loop. No magic. **Flint** gives you well-typed buildin
 ```sh
 npm install flint @flint/adapter-anthropic
 ```
-
-> Not on npm yet. Install from the repo during v0:
-> `npm install github:DizzyMii/flint`
 
 ## Quick start
 
@@ -118,7 +114,7 @@ if (out.ok) console.log(out.value.message.content); // "579"
 
 Full documentation at **[dizzymii.github.io/flint](https://dizzymii.github.io/flint)**:
 
-- [Guide](https://dizzymii.github.io/flint/guide/) — installation, quick start, v0 stability notes
+- [Guide](https://dizzymii.github.io/flint/guide/) — installation, quick start, stability notes
 - [Primitives](https://dizzymii.github.io/flint/primitives/call) — `call`, `stream`, `validate`, `tool`, `execute`, `count`, `agent`
 - [Features](https://dizzymii.github.io/flint/features/budget) — budget, compress, memory, RAG, recipes, safety, graph
 - [Adapters](https://dizzymii.github.io/flint/adapters/anthropic) — Anthropic, OpenAI-compatible, custom

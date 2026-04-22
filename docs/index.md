@@ -36,8 +36,3 @@ features:
     title: State machine workflows
     details: The @flint/graph package adds typed state machine workflows with memory checkpointing.
 ---
-
-<div style="text-align:center;margin:2rem 0;padding:1rem;background:var(--vp-c-bg-soft);border-radius:8px;border:1px solid var(--vp-c-warning-2)">
-  <strong>v0 · under active development · not yet published to npm</strong><br>
-  <span style="font-size:0.9em">API may change before 1.0. <a href="/flint/guide/v0-status">See stability notes.</a></span>
-</div>

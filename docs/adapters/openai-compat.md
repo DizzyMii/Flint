@@ -4,12 +4,6 @@ A generic adapter for any provider that exposes an OpenAI-compatible Chat Comple
 API. Works out of the box with OpenAI, Groq, Together AI, DeepSeek, Fireworks, Mistral,
 Perplexity, Ollama (local), and any other server that speaks the same wire format.
 
-:::warning v0 stub
-`@flint/adapter-openai-compat` is not yet fully implemented. Calling it currently
-throws `NotImplementedError`. Track progress in the repository — this adapter is a
-priority for the next release.
-:::
-
 ## Install
 
 ```bash
