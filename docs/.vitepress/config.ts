@@ -7,9 +7,7 @@ export default defineConfig({
   base: '/Flint/',
   srcExclude: ['superpowers/**'],
 
-  head: [
-    ['link', { rel: 'icon', type: 'image/png', href: '/Flint/logo.png' }],
-  ],
+  head: [['link', { rel: 'icon', type: 'image/png', href: '/Flint/logo.png' }]],
 
   themeConfig: {
     logo: '/logo.png',
