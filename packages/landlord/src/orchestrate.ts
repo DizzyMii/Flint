@@ -120,10 +120,10 @@ export async function orchestrate(
       }
     }
 
-    config.onEvent?.({ type: 'tenant_started', role: contract.role });
-
     const workDir = join(baseOutputDir, contract.role);
     await mkdir(workDir, { recursive: true });
+
+    config.onEvent?.({ type: 'tenant_started', role: contract.role });
 
     let lastError: string | undefined;
 
