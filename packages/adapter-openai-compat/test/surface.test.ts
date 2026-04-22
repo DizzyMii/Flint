@@ -90,7 +90,7 @@ describe('openaiCompatAdapter -- call() HTTP', () => {
     let capturedHeaders: Record<string, string> = {};
     const fetch = async (_: URL | RequestInfo, init: RequestInit | undefined): Promise<Response> => {
       const h = new Headers(init?.headers);
-      capturedHeaders = Object.fromEntries(h.entries());
+      capturedHeaders = {}; h.forEach((v, k) => { capturedHeaders[k] = v; });
       return new Response(JSON.stringify(mockResponse()), { status: 200, headers: { 'content-type': 'application/json' } });
     };
     await openaiCompatAdapter({ baseUrl: 'https://api.openai.com/v1', apiKey: 'sk-test', fetch })
@@ -102,7 +102,7 @@ describe('openaiCompatAdapter -- call() HTTP', () => {
     let capturedHeaders: Record<string, string> = {};
     const fetch = async (_: URL | RequestInfo, init: RequestInit | undefined): Promise<Response> => {
       const h = new Headers(init?.headers);
-      capturedHeaders = Object.fromEntries(h.entries());
+      capturedHeaders = {}; h.forEach((v, k) => { capturedHeaders[k] = v; });
       return new Response(JSON.stringify(mockResponse()), { status: 200, headers: { 'content-type': 'application/json' } });
     };
     await openaiCompatAdapter({ baseUrl: 'http://localhost:11434/v1', fetch })
@@ -114,7 +114,7 @@ describe('openaiCompatAdapter -- call() HTTP', () => {
     let capturedHeaders: Record<string, string> = {};
     const fetch = async (_: URL | RequestInfo, init: RequestInit | undefined): Promise<Response> => {
       const h = new Headers(init?.headers);
-      capturedHeaders = Object.fromEntries(h.entries());
+      capturedHeaders = {}; h.forEach((v, k) => { capturedHeaders[k] = v; });
       return new Response(JSON.stringify(mockResponse()), { status: 200, headers: { 'content-type': 'application/json' } });
     };
     await openaiCompatAdapter({ baseUrl: 'https://api.groq.com/openai/v1', apiKey: 'gsk_test', defaultHeaders: { 'x-custom': 'hello' }, fetch })
