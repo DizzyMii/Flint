@@ -61,6 +61,7 @@ export type OrchestratorConfig = {
   adapter: ProviderAdapter;
   landlordModel: string;
   tenantModel: string;
+  /** Shared job-level budget consumed by ALL tenants and the landlord decompose call. */
   budget?: Budget;
   outputDir?: string;
   onEvent?: (event: LandlordEvent) => void;
@@ -80,7 +81,11 @@ export async function orchestrate(
   if (!decomposeResult.ok) return decomposeResult;
   const plan = decomposeResult.value;
 
-  resolveOrder(plan); // validate — throws DependencyCycleError if cyclic
+  try {
+    resolveOrder(plan);
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e : new Error(String(e)) };
+  }
 
   const baseOutputDir = config.outputDir ?? join(tmpdir(), `landlord-${Date.now()}`);
   await mkdir(join(baseOutputDir, 'shared'), { recursive: true });
