@@ -102,7 +102,7 @@ if (out.ok) console.log(out.value.message.content); // "579"
 
 ## Flint vs LangChain
 
-LangChain models everything as a class hierarchy — LLMs, chains, tools, and agents are objects you instantiate and compose. You learn LangChain's abstractions, then use them to talk to models. Flint is plain async functions: `call`, `tool`, `agent`. You learn the provider API once; Flint adds thin, well-typed helpers on top. LangChain's modular package system means installing 3+ packages with dozens of transitive dependencies per provider; Flint has one runtime dependency (`@standard-schema/spec`). Where LangChain throws on errors, Flint returns `Result<T>` — no try/catch at call sites.
+LangChain models everything as a class hierarchy — LLMs, chains, tools, and agents are objects you instantiate and compose. You learn LangChain's abstractions, then use them to talk to models. Flint is plain async functions: `call`, `tool`, `agent`. You learn the provider API once; Flint adds thin, well-typed helpers on top. LangChain's modular package system means installing 3+ packages with dozens of transitive dependencies per provider; Flint has one runtime dependency (`@standard-schema/spec`). Where LangChain's executor surfaces errors as thrown exceptions, Flint returns `Result<T>` — no try/catch at call sites.
 
 ### Install
 
@@ -179,8 +179,9 @@ const add = tool({
 import { ChatAnthropic } from '@langchain/anthropic';
 import { AgentExecutor, createToolCallingAgent } from 'langchain/agents';
 import { ChatPromptTemplate } from '@langchain/core/prompts';
+// add tool defined in previous snippet
 
-const llm = new ChatAnthropic({ model: 'claude-opus-4-7' });
+const llm = new ChatAnthropic({ model: 'claude-opus-4-7', apiKey: process.env.ANTHROPIC_API_KEY });
 const prompt = ChatPromptTemplate.fromMessages([
   ['system', 'You are a helpful assistant.'],
   ['placeholder', '{chat_history}'],
@@ -197,6 +198,7 @@ console.log(result.output); // "579"
 ```ts
 import { agent } from 'flint';
 import { budget } from 'flint/budget';
+// adapter and add defined above
 
 const out = await agent({
   adapter,
