@@ -67,7 +67,69 @@ describe('myTool', () => {
 });
 ```
 
+## execute() signature
+
+```ts
+function execute<Input, Output>(
+  tool: Tool<Input, Output>,
+  rawInput: unknown
+): Promise<Result<Output>>
+```
+
+`execute()` does two things in order:
+1. **Validates** `rawInput` against `tool.input` using `validate()`
+2. **Runs** `tool.handler(parsedInput)`, optionally with a timeout
+
+## Error cases
+
+| Error type | Code | When |
+|------------|------|------|
+| `ParseError` | `'parse.tool_input'` | Input fails schema validation |
+| `ToolError` | `'tool.handler_threw'` | Handler throws an exception |
+| `TimeoutError` | `'tool.timeout'` | Handler exceeds `tool.timeout` ms |
+
+```ts
+const res = await execute(myTool, rawInput);
+if (!res.ok) {
+  if (res.error.code === 'parse.tool_input') {
+    // Input was wrong type — programming error
+  } else if (res.error.code === 'tool.timeout') {
+    // Handler ran too long
+  } else {
+    // Handler threw — res.error.cause has the original exception
+    console.error(res.error.cause);
+  }
+}
+```
+
+## Using execute() for testing
+
+`execute()` is the cleanest way to unit test tools — no LLM involved:
+
+```ts
+// test directly
+const result = await execute(calculatorTool, { expression: '2 + 2' });
+expect(result.ok).toBe(true);
+expect(result.value).toBe(4);
+
+// test validation
+const invalid = await execute(calculatorTool, { expression: 123 });
+expect(invalid.ok).toBe(false);
+expect(invalid.error.code).toBe('parse.tool_input');
+```
+
+## Difference from calling the handler directly
+
+`execute()` vs `tool.handler(input)`:
+- `execute()` validates input first (catches type errors before they reach your handler)
+- `execute()` wraps handler exceptions as `Result` (no uncaught promise rejections)
+- `execute()` enforces the timeout (if set)
+- `execute()` returns `Result<Output>` (never throws)
+
+Use `execute()` in tests and anywhere you're calling tools outside the agent loop.
+
 ## See also
 
-- [tool()](/primitives/tool) — define a tool
-- [agent()](/primitives/agent) — agent loop calls `execute()` for each tool call
+- [tool()](/primitives/tool) — defining tools
+- [Testing](/guide/testing) — testing tools with execute()
+- [Error Types](/reference/errors) — ParseError, ToolError, TimeoutError
