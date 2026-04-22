@@ -1,4 +1,31 @@
+import {
+  agent, call, count, execute, stream, tool, validate,
+} from 'flint';
+import { budget } from 'flint/budget';
+import {
+  AdapterError, BudgetExhausted, FlintError, NotImplementedError,
+  ParseError, TimeoutError, ToolError, ValidationError,
+} from 'flint/errors';
+import { mockAdapter, scriptedAdapter } from 'flint/testing';
 import { describe, expect, it } from 'vitest';
+
+describe('flint exports integrity', () => {
+  it('7 core primitives all present', () => {
+    for (const fn of [call, stream, validate, tool, execute, count, agent]) {
+      expect(typeof fn).toBe('function');
+    }
+  });
+  it('budget subpath', () => { expect(typeof budget).toBe('function'); });
+  it('errors subpath — 8 classes', () => {
+    for (const cls of [FlintError, AdapterError, ValidationError, ToolError, BudgetExhausted, ParseError, TimeoutError, NotImplementedError]) {
+      expect(typeof cls).toBe('function');
+    }
+  });
+  it('testing subpath — mockAdapter and scriptedAdapter', () => {
+    expect(typeof mockAdapter).toBe('function');
+    expect(typeof scriptedAdapter).toBe('function');
+  });
+});
 
 describe('public surface (source)', () => {
   it('root exports resolve', async () => {
