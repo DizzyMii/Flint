@@ -143,9 +143,110 @@ const res = await call({
 });
 ```
 
+## CallOptions reference
+
+```ts
+type CallOptions<T = unknown> = {
+  // Required
+  adapter: ProviderAdapter;
+  model: string;
+  messages: Message[];
+
+  // Output schema — forces JSON response and validates against schema
+  schema?: StandardSchemaV1<unknown, T>;
+
+  // LLM call parameters
+  tools?: Tool[];
+  maxTokens?: number;
+  temperature?: number;
+  stopSequences?: string[];
+  cache?: CacheControl;
+
+  // Flint features
+  budget?: Budget;
+  compress?: Transform;
+  logger?: Logger;
+  signal?: AbortSignal;
+};
+```
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `adapter` | `ProviderAdapter` | required | The LLM provider adapter |
+| `model` | `string` | required | Model identifier (e.g. `'claude-opus-4-7'`) |
+| `messages` | `Message[]` | required | Conversation history |
+| `schema` | `StandardSchemaV1` | — | Validates response as JSON against schema. Sets `output.value` on success. |
+| `tools` | `Tool[]` | — | Tools available for this call |
+| `maxTokens` | `number` | — | Max output tokens (provider default if unset) |
+| `temperature` | `number` | — | Sampling temperature 0-1 |
+| `stopSequences` | `string[]` | — | Stop generation when any sequence is encountered |
+| `cache` | `CacheControl` | — | Explicit cache control (adapter-specific) |
+| `budget` | `Budget` | — | Budget to consume for this call |
+| `compress` | `Transform` | — | Message transform applied before sending |
+| `logger` | `Logger` | — | Receives debug/info/warn/error log entries |
+| `signal` | `AbortSignal` | — | Cancels the request when aborted |
+
+## CallOutput reference
+
+```ts
+type CallOutput<T = unknown> = {
+  message: Message & { role: 'assistant' };
+  value?: T;           // populated when schema is set and validation passes
+  usage: Usage;        // { input, output, cached? } token counts
+  cost?: number;       // USD cost (populated if adapter reports it)
+  stopReason: StopReason; // 'end' | 'tool_call' | 'max_tokens' | 'stop_sequence'
+};
+```
+
+## StopReason values
+
+| Value | Meaning |
+|-------|---------|
+| `'end'` | Model finished naturally |
+| `'tool_call'` | Model wants to call a tool — check `message.toolCalls` |
+| `'max_tokens'` | Hit `maxTokens` limit or provider max |
+| `'stop_sequence'` | Hit one of `stopSequences` |
+
+## Schema validation
+
+When `schema` is set, `call()`:
+1. Expects the model response to be valid JSON
+2. Parses the JSON
+3. Validates against the schema
+4. Returns `{ ok: false, error: ValidationError }` if validation fails, or `{ ok: false, error: ParseError }` if the response isn't JSON
+
+```ts
+import * as v from 'valibot';
+
+const res = await call({
+  adapter,
+  model: 'claude-opus-4-7',
+  messages: [{ role: 'user', content: 'Return JSON: { "score": 0-10 }' }],
+  schema: v.object({ score: v.number() }),
+});
+
+if (res.ok) {
+  console.log(res.value.value?.score); // typed as number
+}
+```
+
+::: warning Schema validation applies after tool calls
+If `stopReason === 'tool_call'`, schema validation is skipped — the message contains tool calls, not JSON output.
+:::
+
+## Common mistakes
+
+::: warning Don't access res.value without checking res.ok first
+`res.value` is only defined when `res.ok === true`. TypeScript enforces this, but be careful with type assertions.
+:::
+
+::: tip Use compress to manage context window costs
+Pass a `compress` transform to trim redundant messages before they're sent. See [Compress & Pipeline](/features/compress).
+:::
+
 ## See also
 
 - [stream()](/primitives/stream) — streaming variant
-- [agent()](/primitives/agent) — multi-step loop that calls `call()` internally
-- [Budget](/features/budget) — budget limits and enforcement
-- [Compress & Pipeline](/features/compress) — message transforms
+- [agent()](/primitives/agent) — multi-step tool-calling loop
+- [Budget](/features/budget) — step/token/dollar limits
+- [Error Types](/reference/errors) — AdapterError, ValidationError, ParseError
