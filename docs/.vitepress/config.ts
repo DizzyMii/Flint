@@ -4,10 +4,12 @@ import { defineConfig } from 'vitepress';
 export default defineConfig({
   title: 'Flint',
   description: 'Token-efficient agentic TypeScript runtime',
-  base: '/flint/',
+  base: '/Flint/',
   srcExclude: ['superpowers/**'],
 
-  head: [['link', { rel: 'icon', type: 'image/png', href: '/flint/logo.png' }]],
+  head: [
+    ['link', { rel: 'icon', type: 'image/png', href: '/Flint/logo.png' }],
+  ],
 
   themeConfig: {
     logo: '/logo.png',
