@@ -100,6 +100,114 @@ if (out.ok) console.log(out.value.message.content); // "579"
 | `@flint/adapter-openai-compat` | Any OpenAI-compatible endpoint |
 | `@flint/graph` | State-machine agent workflows |
 
+## Flint vs LangChain
+
+LangChain models everything as a class hierarchy — LLMs, chains, tools, and agents are objects you instantiate and compose. You learn LangChain's abstractions, then use them to talk to models. Flint is plain async functions: `call`, `tool`, `agent`. You learn the provider API once; Flint adds thin, well-typed helpers on top. LangChain's modular package system means installing 3+ packages with dozens of transitive dependencies per provider; Flint has one runtime dependency (`@standard-schema/spec`). Where LangChain throws on errors, Flint returns `Result<T>` — no try/catch at call sites.
+
+### Install
+
+**LangChain**
+```sh
+npm install langchain @langchain/anthropic @langchain/core
+```
+
+**Flint**
+```sh
+npm install flint @flint/adapter-anthropic
+```
+
+### Basic LLM call
+
+**LangChain**
+```ts
+import { ChatAnthropic } from '@langchain/anthropic';
+import { HumanMessage } from '@langchain/core/messages';
+
+const llm = new ChatAnthropic({
+  model: 'claude-opus-4-7',
+  apiKey: process.env.ANTHROPIC_API_KEY,
+});
+const res = await llm.invoke([new HumanMessage('What is the capital of France?')]);
+console.log(res.content); // "Paris"
+```
+
+**Flint**
+```ts
+import { call } from 'flint';
+import { anthropicAdapter } from '@flint/adapter-anthropic';
+
+const adapter = anthropicAdapter({ apiKey: process.env.ANTHROPIC_API_KEY! });
+const res = await call({
+  adapter,
+  model: 'claude-opus-4-7',
+  messages: [{ role: 'user', content: 'What is the capital of France?' }],
+});
+if (res.ok) console.log(res.value.message.content); // "Paris"
+```
+
+### Tool definition
+
+**LangChain**
+```ts
+import { tool } from '@langchain/core/tools';
+import { z } from 'zod';
+
+const add = tool(({ a, b }) => String(a + b), {
+  name: 'add',
+  description: 'Add two numbers',
+  schema: z.object({ a: z.number(), b: z.number() }),
+});
+```
+
+**Flint**
+```ts
+import { tool } from 'flint';
+import * as v from 'valibot'; // any Standard Schema library works
+
+const add = tool({
+  name: 'add',
+  description: 'Add two numbers',
+  input: v.object({ a: v.number(), b: v.number() }),
+  handler: ({ a, b }) => a + b,
+});
+```
+
+### Agent loop
+
+**LangChain**
+```ts
+import { ChatAnthropic } from '@langchain/anthropic';
+import { AgentExecutor, createToolCallingAgent } from 'langchain/agents';
+import { ChatPromptTemplate } from '@langchain/core/prompts';
+
+const llm = new ChatAnthropic({ model: 'claude-opus-4-7' });
+const prompt = ChatPromptTemplate.fromMessages([
+  ['system', 'You are a helpful assistant.'],
+  ['placeholder', '{chat_history}'],
+  ['human', '{input}'],
+  ['placeholder', '{agent_scratchpad}'],
+]);
+const agent = createToolCallingAgent({ llm, tools: [add], prompt });
+const executor = new AgentExecutor({ agent, tools: [add] });
+const result = await executor.invoke({ input: 'What is 123 + 456?' });
+console.log(result.output); // "579"
+```
+
+**Flint**
+```ts
+import { agent } from 'flint';
+import { budget } from 'flint/budget';
+
+const out = await agent({
+  adapter,
+  model: 'claude-opus-4-7',
+  messages: [{ role: 'user', content: 'What is 123 + 456?' }],
+  tools: [add],
+  budget: budget({ maxSteps: 5, maxDollars: 0.10 }),
+});
+if (out.ok) console.log(out.value.message.content); // "579"
+```
+
 ## Why Flint
 
 - **One dependency** — `@standard-schema/spec` only. No transitive framework sprawl.
