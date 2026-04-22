@@ -65,12 +65,33 @@ const out = await agent({
 if (out.ok) console.log(out.value.message.content); // "579"
 ```
 
+### Multi-agent orchestration
+
+```ts
+import { orchestrate } from '@flint/landlord';
+import { fileTool, bashTool } from '@flint/landlord/tools';
+import { anthropicAdapter } from '@flint/adapter-anthropic';
+
+const adapter = anthropicAdapter({ apiKey: process.env.ANTHROPIC_API_KEY! });
+
+const result = await orchestrate(
+  'Build a CLI tool that fetches exchange rates and converts currencies',
+  (workDir) => [fileTool(workDir), bashTool(workDir)],
+  { adapter, landlordModel: 'claude-opus-4-7', tenantModel: 'claude-sonnet-4-6' },
+);
+
+if (result.ok) {
+  console.log(result.value.status); // "complete"
+  console.log(result.value.artifacts); // per-role output artifacts
+}
+```
+
 ## What you get
 
 ### Core (`flint`)
 
 - 1 runtime dependency (`@standard-schema/spec`)
-- 6 primitives: `call`, `stream`, `validate`, `tool`, `execute`, `count`
+- 7 primitives: `call`, `stream`, `validate`, `tool`, `execute`, `count`, `agent`
 - `agent()` loop with step / token / dollar budget caps
 - 6 compress transforms + `pipeline()` combinator: `dedup`, `windowLast`, `windowFirst`, `truncateToolResults`, `summarize`, `orderForCache`
 - 4 recipes: `react` (ReAct pattern), `retryValidate`, `reflect`, `summarize`
@@ -82,6 +103,15 @@ if (out.ok) console.log(out.value.message.content); // "579"
 
 - `@flint/adapter-anthropic` — prompt-cache aware, pure `fetch` + `ReadableStream`
 - `@flint/adapter-openai-compat` — any OpenAI-compatible endpoint (OpenAI, Groq, Ollama, DeepSeek, Together)
+
+### Landlord (`@flint/landlord`)
+
+Multi-agent orchestrator that decomposes a natural-language prompt into a dependency-ordered plan and runs each sub-task as an isolated tenant agent.
+
+- `decompose()` — LLM-driven task decomposition into typed `Contract[]`
+- `runTenant()` — single-tenant agent loop with Zod-validated checkpoints + LLM judge
+- `orchestrate()` — topological sort, parallel dispatch, retry/eviction, shared artifact passing
+- `tools/` subpath — `bashTool`, `fileTool`, `webTool` factory functions scoped to a working directory
 
 ### Graph
 
@@ -99,6 +129,7 @@ if (out.ok) console.log(out.value.message.content); // "579"
 | `@flint/adapter-anthropic` | Anthropic Messages API — prompt-cache aware |
 | `@flint/adapter-openai-compat` | Any OpenAI-compatible endpoint |
 | `@flint/graph` | State-machine agent workflows |
+| `@flint/landlord` | Multi-agent orchestrator: decompose, tenant agents, parallel dispatch |
 
 ## Why Flint
 
