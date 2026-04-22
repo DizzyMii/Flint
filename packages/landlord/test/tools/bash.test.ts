@@ -30,6 +30,9 @@ describe('bashTool', () => {
     const bash = bashTool(workDir);
     const result = await execute(bash, { command: 'echo error_text >&2' });
     expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(String(result.value)).toContain('error_text');
+    }
   });
 
   it('returns error on non-zero exit code', async () => {
