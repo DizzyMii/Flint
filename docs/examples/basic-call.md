@@ -55,3 +55,8 @@ if (res.ok && res.value.value) {
   console.log(`${city}, ${country} — population: ${population}`);
 }
 ```
+
+## See also
+- [call()](/primitives/call) — full API
+- [agent()](/primitives/agent) — multi-step loop
+- [Quick Start](/guide/quick-start)

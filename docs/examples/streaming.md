@@ -40,3 +40,7 @@ for await (const chunk of stream({
 
 console.log(`\nBudget remaining: ${b.remaining().tokens} tokens`);
 ```
+
+## See also
+- [stream()](/primitives/stream) — full API and StreamChunk types
+- [Budget](/features/budget) — streaming budget consumption

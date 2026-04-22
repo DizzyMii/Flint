@@ -60,3 +60,8 @@ if (out.ok) {
   console.error('Agent failed:', out.error.message);
 }
 ```
+
+## See also
+- [agent()](/primitives/agent) — full API
+- [Budget](/features/budget) — budget options
+- [Testing](/guide/testing) — test agent loops

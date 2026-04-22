@@ -48,3 +48,9 @@ The root `.changeset/README.md` and commit history document all breaking changes
 ## When will 1.0 land?
 
 When the API surface is proven stable through real usage. There is no committed timeline.
+
+## See also
+
+- [Installation](/guide/installation) — runtime requirements
+- [Guide](/guide/) — what Flint is and how it fits together
+- [STABILITY.md](/STABILITY) — detailed stability policy

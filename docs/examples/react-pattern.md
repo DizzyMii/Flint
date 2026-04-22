@@ -51,5 +51,5 @@ if (out.ok) {
 
 ## See also
 
-- [agent()](/primitives/agent) — unstructured agent loop
-- [Recipes](/features/recipes) — other recipe patterns
+- [Recipes](/features/recipes) — react() API
+- [agent()](/primitives/agent) — underlying loop

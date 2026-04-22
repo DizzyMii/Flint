@@ -39,3 +39,8 @@ if (res.ok) {
 ```
 
 For automatic tool execution in a loop, use [agent()](/examples/agent).
+
+## See also
+- [tool()](/primitives/tool) — full tool spec
+- [execute()](/primitives/execute) — test tools directly
+- [agent()](/primitives/agent) — tool-using loop
