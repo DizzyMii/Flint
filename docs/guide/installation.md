@@ -75,3 +75,37 @@ console.log(res.ok ? res.value.message.content : res.error.message);
 > [!NOTE]
 > Flint is not yet published to npm. Install from the repository directly during v0:
 > `npm install github:DizzyMii/flint`
+
+## Monorepo setup
+
+In a monorepo, install at the workspace level:
+
+```sh
+pnpm add flint @flint/adapter-anthropic --filter my-app
+# or
+npm install flint @flint/adapter-anthropic -w packages/my-app
+```
+
+## Runtime support
+
+| Runtime | Support |
+|---------|---------|
+| Node.js 20+ | Full support |
+| Bun 1.0+ | Full support |
+| Deno 1.40+ | Full support (use npm: specifier) |
+| Browser | Core works; adapters require CORS |
+| Cloudflare Workers | Use `fetch` — no Node.js specifics needed |
+| AWS Lambda | Node.js 20 runtime |
+
+## Common installation errors
+
+**`ERR_REQUIRE_ESM`**: Add `"type": "module"` to `package.json`.
+
+**`Cannot find module 'flint/budget'`**: Requires `moduleResolution: "bundler"` or `"node16"` in `tsconfig.json`.
+
+**`Cannot find module '@standard-schema/spec'`**: Run `npm install` again — peer dependency may not have been auto-installed.
+
+## See also
+
+- [Quick Start](/guide/quick-start) — first working example
+- [Setup](/guide/#setup) — API key and TypeScript config

@@ -95,9 +95,37 @@ for await (const chunk of stream({
 }
 ```
 
+## What just happened?
+
+In the basic call example:
+1. `anthropicAdapter()` creates a transport layer — pure `fetch`, no HTTP library
+2. `call()` sends your messages to the Anthropic API and returns `Result<CallOutput>`
+3. `res.ok` is `true` when the API call succeeded and any schema validation passed
+4. `res.value.message.content` is the assistant's text response
+
+In the agent loop example:
+1. `budget({ maxSteps: 5, maxDollars: 0.10 })` creates a shared spending cap
+2. `agent()` loops: call → execute tools → call again, until no tool calls or budget hit
+3. `out.value.steps` contains every tool call and result from the loop
+4. `out.value.usage` is the total token usage across all steps
+
+## Common next steps
+
+- Add more tools → [tool()](/primitives/tool)
+- Handle errors by type → [Error Types](/reference/errors)
+- Stream responses → [stream()](/primitives/stream)
+- Enforce budgets → [Budget](/features/budget)
+- Add safety → [Safety](/features/safety)
+
 ## Next steps
 
 - [Primitives reference](/primitives/call) — full API for `call`, `stream`, `validate`, `tool`, `execute`, `count`
 - [Agent loop & budget](/primitives/agent) — complete `agent()` options
 - [Compress & pipeline](/features/compress) — reduce token usage with message transforms
 - [Safety](/features/safety) — injection detection, redaction, approval gates
+
+## See also
+
+- [Flint vs LangChain](/guide/vs-langchain) — coming from another framework?
+- [FAQ](/guide/faq) — design questions answered
+- [Examples](/examples/basic-call) — more complete examples

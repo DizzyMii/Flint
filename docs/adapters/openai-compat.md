@@ -108,8 +108,62 @@ if (result.ok) {
 platform's native `fetch` (or a custom implementation you supply via the `fetch`
 option) and types re-exported from the core `flint` package.
 
+## openAICompatAdapter() options
+
+```ts
+function openAICompatAdapter(options: {
+  apiKey: string;
+  baseURL: string;
+  defaultHeaders?: Record<string, string>;
+}): ProviderAdapter
+```
+
+## Provider-specific configurations
+
+**OpenAI:**
+```ts
+openAICompatAdapter({ apiKey: process.env.OPENAI_API_KEY!, baseURL: 'https://api.openai.com/v1' })
+```
+
+**Groq (fast inference):**
+```ts
+openAICompatAdapter({ apiKey: process.env.GROQ_API_KEY!, baseURL: 'https://api.groq.com/openai/v1' })
+// Note: Groq has aggressive rate limits on free tier
+```
+
+**Together AI:**
+```ts
+openAICompatAdapter({ apiKey: process.env.TOGETHER_API_KEY!, baseURL: 'https://api.together.xyz/v1' })
+```
+
+**DeepSeek:**
+```ts
+openAICompatAdapter({ apiKey: process.env.DEEPSEEK_API_KEY!, baseURL: 'https://api.deepseek.com/v1' })
+```
+
+**Ollama (local):**
+```ts
+openAICompatAdapter({ apiKey: 'ollama', baseURL: 'http://localhost:11434/v1' })
+// apiKey is required by the adapter but not validated by Ollama
+```
+
+## Capabilities
+
+```ts
+adapter.capabilities = {
+  streaming: true,
+  toolCalling: true,   // supported by most OpenAI-compat providers
+  vision: false,       // varies by provider
+  cost: false,         // most providers don't report cost
+  promptCaching: false,
+};
+```
+
+Cost and caching are not reported — `maxDollars` budgets won't trigger with this adapter.
+
 ## See Also
 
 - [Anthropic Adapter](./anthropic.md)
 - [Writing an Adapter](./custom.md)
+- [FAQ: Does Flint support local models?](/guide/faq#does-flint-support-local-models)
 - Source: `packages/adapter-openai-compat/src/index.ts`
