@@ -87,7 +87,7 @@ Two error codes trigger retry:
 
 Both codes represent a correctable model output failure — the model produced text but in the wrong format. The correction strategy appends the assistant's bad response to the conversation (so the model can see what it produced) followed by a user message explaining the failure and requesting correction. The `err.message` is included verbatim so the model receives the specific validation failure reason (e.g., "required field 'name' is missing").
 
-The `if (assistantMsg?.role === 'assistant') convo.push(assistantMsg)` guard re-appends the assistant message from the last `call` only if it is actually an assistant message. This is a safety check — `call` always sets `message.role = 'assistant'` on success, and the message was not yet pushed to `convo` (since `call` in `retryValidate` does not push to `convo` on failure). However, if for any reason the last `convo` entry is not an assistant message, the guard prevents corrupting the conversation structure with a double-appended message.
+The `if (assistantMsg?.role === 'assistant') convo.push(assistantMsg)` guard checks whether `convo`'s last element is already an assistant message before re-appending it. `assistantMsg` is `convo[convo.length - 1]` — the last element already in `convo`, not the response from the current failed `call`. On every normal path through the loop, `convo` ends with a user message: either the original caller messages (first iteration) or the correction prompt appended in the previous iteration. So `assistantMsg?.role` is never `'assistant'` during normal execution — this guard is dead code on the normal retry path. It is a defensive belt against a caller pre-seeding `convo` with a trailing assistant message, or some other unexpected state that leaves `convo` ending with an assistant turn. If that were to happen, pushing `assistantMsg` again would duplicate the message; the guard prevents that corruption.
 
 ### Non-retriable errors: bail immediately
 
@@ -123,7 +123,7 @@ lastRes = undefined;
 return lastRes ?? { ok: false, error: new Error('retryValidate: maxAttempts exhausted') as never };
 ```
 
-`lastRes` captures the most recent retriable error result. At loop exhaustion, if `lastRes` is defined, it carries the last validation/parse error — which is the most informative error to return (it contains the schema failure detail). If `lastRes` is `undefined` (only possible if the last attempt produced a tool-call response), the fallback generic error is returned. The `as never` cast on the generic `Error` satisfies the `Result<T>` type — `FlintError` is used throughout the codebase, but this fallback path is a defensive backstop and uses a plain `Error` to avoid importing `FlintError` for a non-`FlintError` code path.
+`lastRes` captures the most recent retriable error result. At loop exhaustion, if `lastRes` is defined, it carries the last validation/parse error — which is the most informative error to return (it contains the schema failure detail). If `lastRes` is `undefined` (only possible if the last attempt produced a tool-call response), the fallback generic error is returned. The `as never` cast on the fallback `new Error(...)` is a type escape hatch: `Result<T>` requires `{ ok: false; error: FlintError }`, and a plain `Error` is not assignable to `FlintError`. Rather than satisfy the constraint properly — which would require importing `FlintError` and constructing one — the cast bypasses the type system entirely. This is acceptable because the fallback path is a defensive backstop that should rarely fire in practice; coupling the module to `FlintError` purely for this edge case would be unnecessary overhead.
 
 ### Why loop not recursion
 
@@ -142,6 +142,8 @@ for (let i = 0; i <= maxRevisions; i++) {
 ```
 
 The loop runs from `i = 0` through `i = maxRevisions` inclusive — that is `maxRevisions + 1` total iterations. Iteration `i = 0` is the initial draft attempt. Iterations `i = 1` through `i = maxRevisions` are revisions. If the loop used `i < maxRevisions`, the initial call at `i = 0` would consume one revision slot, leaving only `maxRevisions - 1` actual revision passes. The `<=` bound ensures `maxRevisions` is the count of revisions after the initial draft, not including the initial draft.
+
+**Edge case: `maxRevisions = 0`.** With `maxRevisions = 0`, the loop runs exactly once (`i = 0` only). The initial draft is generated, the critic is called once, and the loop ends — regardless of whether the critic approved. If the critic approves, the early-exit path returns the draft. If the critic rejects, the critique is injected into `convo` and the loop ends; the fail-open path then returns the draft anyway. This is effectively "generate once, evaluate, return regardless" mode. It is useful as a lightweight quality gate: the caller still gets the critic's feedback via the `crit.critique` value (if it wraps `reflect` to capture it), but no revision tokens are spent and the function always produces a result.
 
 ### Critic callback
 
@@ -238,7 +240,7 @@ const combineRes = await call({
 });
 ```
 
-The reduce step sends all chunk summaries in a single call with a different instruction than the per-chunk summarization prompt. The per-chunk prompt asks to preserve key facts from a raw text segment; the reduce prompt asks to synthesize multiple already-summarized segments into one cohesive summary. Using the same prompt for both would confuse the model — a per-chunk prompt applied to summaries-of-summaries produces redundant meta-summarization behavior. A separate call with a purpose-built instruction yields a more coherent final output.
+The reduce step sends all chunk summaries in a single call with a different instruction than the per-chunk summarization prompt. The per-chunk prompt is `"Summarize the following text concisely, preserving key facts:\n\n${c}"` — it asks the model to compress a raw text segment while retaining its key information. The reduce prompt asks to synthesize multiple already-summarized segments into one cohesive summary. Using the same prompt for both would confuse the model — a per-chunk prompt applied to summaries-of-summaries produces redundant meta-summarization behavior. A separate call with a purpose-built instruction yields a more coherent final output.
 
 Chunk summaries are joined with `\n\n---\n\n` — a visual separator that signals to the model that each block is a distinct chunk summary, not a continuous document. This framing reduces the chance the model treats the boundary text as part of a sentence.
 
