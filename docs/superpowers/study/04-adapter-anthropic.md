@@ -145,7 +145,7 @@ Maps Anthropic's four stop reasons to Flint's four:
 | `max_tokens`     | `max_tokens`    |
 | `tool_use`       | `tool_call`     |
 
-Implementation detail: `end_turn` and `stop_sequence` share a single `if` branch (`reason === 'end_turn' || reason === 'stop_sequence'`), with an inner ternary routing them to their distinct Flint values. `max_tokens` and `tool_use` each have their own branch. An unreachable fallback returns `'end'`.
+Implementation detail: `end_turn` and `stop_sequence` share a single `if` branch (`reason === 'end_turn' || reason === 'stop_sequence'`), with an inner ternary routing them to their distinct Flint values. The inner ternary tests `reason === 'stop_sequence'` (the less common case) — returning `'stop_sequence'` on true, `'end'` on false (for `end_turn`). Reading it from the `stop_sequence` side makes the condition clearer since `end_turn` is the default fall-through. `max_tokens` and `tool_use` each have their own branch. An unreachable fallback returns `'end'`.
 
 ---
 
@@ -210,7 +210,7 @@ Assembles the full `AnthropicRequestBody` from a `NormalizedRequest`.
 function buildHeaders(): Record<string, string>
 ```
 
-Closure over `opts.apiKey`. Returns four headers:
+Closure over `opts` (the `anthropicAdapter` options object). Returns four headers:
 
 | Header               | Value                       | Purpose                                      |
 |----------------------|-----------------------------|----------------------------------------------|
