@@ -23,7 +23,7 @@ Returns `void` in both the valid and invalid cases. No throw, no `Result` — th
 
 **`slice(from, to?)`** — delegates straight to `Array.prototype.slice`, including its semantics for negative indices and out-of-range bounds. No additional guard layer.
 
-**`clear()`** — sets `store.length = 0`, mutating in place rather than reassigning. This matters because the closure holds one array reference forever; reassigning would silently break any external code that somehow got a reference to it (impossible through the public API, but a defensive idiom worth noting).
+**`clear()`** — sets `store.length = 0`, mutating in place rather than reassigning. The closure captures the array reference once at creation time; any code that captured the same reference (for example, in tests) would still see the old data if `store` were reassigned to a new `[]`. Mutating in place makes the behavior unambiguous regardless of how the reference is used.
 
 Design rationale: `messages()` is intentionally minimal. It does not model roles, enforce ordering, or apply any LLM-specific logic. It is raw storage. The richer semantics live in `conversationMemory()`.
 
@@ -57,8 +57,8 @@ type ConversationMemoryOpts = {
 };
 ```
 
-- **`max`** — target store size after a summarization cycle completes. The store will hold exactly `1 + keepCount` messages post-summarize (the injected summary message plus the kept tail).
-- **`summarizeAt`** — the threshold length at which the next `append` triggers summarization. Must be `> max` for the math to work; the library does not enforce this but the formula breaks if `summarizeAt <= max`.
+- **`max`** — a configuration parameter used to compute `keepCount = max - summarizeAt`. It does not directly represent the post-summarize store size. The post-summarize store has `1 + (max - summarizeAt)` entries: one injected summary message plus `keepCount` kept messages. For example, with `max: 20, summarizeAt: 15`, `keepCount = 5`, and the post-summarize store has 6 entries (1 summary + 5 kept messages).
+- **`summarizeAt`** — the threshold length at which the next `append` triggers summarization. Must be `< max` for the math to work; the library does not enforce this but the formula breaks if `summarizeAt >= max`.
 - **`summarizer`** — caller-supplied async callback. The library is model-agnostic here; the caller wires in whatever LLM call they want (typically using the `call` primitive from Doc 06). This is the inversion-of-control point: `conversationMemory` owns the trigger and the store mutation, the caller owns the actual summarization logic.
 
 ### `append` trigger mechanic
@@ -74,6 +74,8 @@ async append(m) {
 
 The check fires **after** the new message is pushed. The incoming message is always in the store before any summarization decision. Summarization is synchronous in control flow (it `await`s before returning), so callers that `await append(m)` will see the post-summarize state on the next `messages()` call.
 
+> **Type mismatch footgun.** The `ConversationMemory` type declares `append(m: Message): void`, but the implementation is `async append(m)`, making its actual return type `Promise<void>`. TypeScript will not warn about unawaited calls. Always `await append(m)` — an unawaited call will still push the message but may read a pre-summarization store on the very next operation, because the summarization callback has not yet completed.
+
 ### What gets summarized vs what gets kept
 
 ```ts
@@ -83,6 +85,8 @@ const kept = store.slice(store.length - keepCount);
 ```
 
 `keepCount` is the number of messages that survive the summarization cycle verbatim. Its formula (`max - summarizeAt`) encodes the relationship between the two thresholds: the difference between the maximum allowed size and the point at which summarization fires determines how much recent history is preserved as raw messages. A small difference means fewer recent messages are kept; a large difference means more.
+
+**Concrete example.** With `max: 20, summarizeAt: 15`, `keepCount = 5`. At trigger time, the store has 15 messages. `toSummarize = messages.slice(0, 10)` (the first 10 messages). `kept = messages.slice(-5)` (the last 5). Post-summarize store: `[summaryMessage, ...kept]` — 6 total entries.
 
 `toSummarize` is everything except the tail `keepCount` messages — all older messages, including any previous summary message injected by a prior cycle.
 
