@@ -28,7 +28,7 @@ export type Match = {
 };
 ```
 
-`Match` is the output type of `VectorStore.query`. `id` and `text` mirror the source `Doc` fields. `score` is the cosine similarity value produced by `cosineSimilarity`; the range is [-1, 1] in general, and [0, 1] in practice when using embeddings from providers like OpenAI or Cohere that produce non-negative output vectors. The type does not clamp or normalize the score — that is an implementation detail of whatever `VectorStore` is in use; `memoryStore` passes cosine values through unmodified. `metadata` is forwarded from the source `Doc` when present.
+`Match` is the output type of `VectorStore.query`. `id` and `text` mirror the source `Doc` fields. `score` is the cosine similarity value produced by `cosineSimilarity`; the range is [-1, 1] in general, and [0, 1] in practice when using embeddings from providers like OpenAI or Cohere that produce non-negative output vectors — an empirical property of current standard text embedding models, not a guarantee from their API contracts. The type does not clamp or normalize the score — that is an implementation detail of whatever `VectorStore` is in use; `memoryStore` passes cosine values through unmodified. `metadata` is forwarded from the source `Doc` when present.
 
 ## Embedder
 
@@ -61,7 +61,7 @@ The `Filter` alias (`Record<string, unknown>`) is exported separately so callers
 
 ## cosineSimilarity (private)
 
-Not exported. Callers reach similarity scores through `memoryStore.query` or a custom `VectorStore` implementation; the raw math is an implementation detail.
+Not exported. Callers reach similarity scores through `memoryStore.query` or a custom `VectorStore` implementation; the raw math is an implementation detail. If exported, callers could invoke it directly with vectors of mismatched dimensions — bypassing `memoryStore`'s dimension enforcement — producing silent NaN propagation in similarity scores. Exporting it would also add a semver commitment to the function signature: changes to the implementation (e.g., SIMD optimization, a different accumulator strategy) would become breaking API changes.
 
 ```ts
 function cosineSimilarity(a: number[], b: number[]): number {
@@ -76,7 +76,7 @@ function cosineSimilarity(a: number[], b: number[]): number {
 }
 ```
 
-The formula is `dot(a, b) / (||a|| * ||b||)`. All three accumulators are computed in a single pass to avoid iterating the arrays twice. The `?? 0` fallback handles the case where `b` is shorter than `a` (mismatched dimensions); this is a safety net — `memoryStore` prevents dimension mismatches via the `dimension` guard in `upsert`, so in practice both vectors will always be the same length. The zero-norm guard `if (normA === 0 || normB === 0) return 0` avoids dividing by zero when either input is the all-zeros vector; returning 0 rather than `NaN` keeps sort order stable and prevents downstream consumers from receiving `NaN` scores.
+The formula is `dot(a, b) / (||a|| * ||b||)`. All three accumulators are computed in a single pass to avoid iterating the arrays twice. The `?? 0` fallback handles the case where `b` is shorter than `a` (mismatched dimensions); this is a safety net — `memoryStore` prevents dimension mismatches via the `dimension` guard in `upsert`, so in practice both vectors will always be the same length. Note that the loop is bounded by `a.length`: if `a` is shorter than `b`, extra elements in `b` are silently ignored. Since `memoryStore` enforces dimension parity before any call to `cosineSimilarity`, mismatched-length vectors never occur in practice — but the function itself does not guard against them. The zero-norm guard `if (normA === 0 || normB === 0) return 0` avoids dividing by zero when either input is the all-zeros vector; returning 0 rather than `NaN` keeps sort order stable and prevents downstream consumers from receiving `NaN` scores.
 
 ## memoryStore
 
@@ -106,6 +106,8 @@ if (dimension === undefined) {
 ```
 
 `dimension` is `undefined` until the first doc is stored, at which point it is locked to that doc's embedding length. All subsequent upserts must match exactly. This catches dimension mismatches that arise from switching embedding models mid-session or from a misconfigured `Embedder.dimensions` property. The check runs before the upsert-or-insert logic so no partial state is written on failure.
+
+The lazy inference — rather than accepting a `dimension` argument at construction — is a direct consequence of a deeper design choice: `memoryStore` takes no arguments and does not receive an `Embedder` instance. This is intentional. The store is embedder-agnostic: you can populate it with embeddings from model A and query it with embeddings from model B, as long as dimensions match. If the factory required an `Embedder`, it would couple the store to a specific embedding strategy. Lazy dimension inference is the consequence of this decoupling — there is no `Embedder.dimensions` passed in to initialize it. `memoryStore` trusts the caller to use a consistent embedder and catches mismatches at insert time.
 
 ### Upsert-or-insert via findIndex
 
