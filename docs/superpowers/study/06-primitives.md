@@ -26,7 +26,7 @@ This avoids unconditionally awaiting a sync value (which would be a microtask ro
 
 ### `issues` check
 
-After resolution, the result is a discriminated union: success has `value`, failure has `issues`. The check is `'issues' in result && result.issues !== undefined` — both conditions are required because some schemas leave an empty `issues` array on success rather than omitting the key entirely. Only a defined, non-empty issues array constitutes a failure.
+After resolution, the result is a discriminated union: success has `value`, failure has `issues`. The check is `'issues' in result && result.issues !== undefined` — both conditions are required because some schemas set `issues: undefined` on success (the key is present but explicitly unset). The `'issues' in result` guard handles schemas that omit the key entirely on success; the `!== undefined` guard handles schemas that include the key but set it to `undefined`. Note that an empty array `[]` is not `undefined` — a schema returning `{ issues: [] }` would erroneously trigger failure under this check. The double condition is specifically a guard against `undefined`, not against empty arrays.
 
 ### `ValidationError` contents
 
@@ -103,7 +103,7 @@ const output = await Promise.race<Output>([
 ]);
 ```
 
-`Promise.race` resolves or rejects with whichever promise settles first. If the handler is fast, the timeout promise never fires. If the timeout fires first, the race rejects with `TimeoutError` and the handler's eventual resolution or rejection is silently dropped (no memory leak because the handler promise itself has no other references after the race resolves).
+`Promise.race` resolves or rejects with whichever promise settles first. If the handler is fast, the timeout promise never fires. If the timeout fires first, the race rejects with `TimeoutError` and the handler's eventual resolution or rejection is silently dropped. However, the handler coroutine itself remains live in memory until it eventually resolves, rejects, or the process exits — `Promise.race` resolving does not cancel or collect the losing promise. If the handler is truly hung (e.g., stuck on blocked I/O), it can remain allocated indefinitely. This is a known limitation of the `Promise.race` timeout pattern in JavaScript; there is no general solution without `AbortSignal` cooperation from the handler itself.
 
 ### `TimeoutError` vs `ToolError` discrimination in catch
 
@@ -142,7 +142,7 @@ The `finally` block runs whether the race resolved, rejected with `TimeoutError`
 if (adapter?.count) return adapter.count(messages, model);
 ```
 
-When the adapter exposes a `count` method (optional on `ProviderAdapter`), `count` delegates immediately. The adapter's implementation may call the provider's token-counting API (e.g., Anthropic's `/v1/messages/count_tokens`), which is exact but incurs a network round-trip. Adapter is optional (`adapter?`) so `count` can be called without any adapter at all.
+When the adapter exposes a `count` method (optional on `ProviderAdapter`), `count` delegates immediately. The adapter's implementation may call the provider's token-counting API (e.g., Anthropic's `/v1/messages/count_tokens`), which is exact but incurs a network round-trip. Adapter is optional (`adapter?`) so `count` can be called without any adapter at all. This is intentional: `count` is used in budget estimation and context window pre-checks, which may run before an adapter is configured or in test contexts with no adapter. The fallback to `approxCount` is the entire point of the function — counting is best-effort.
 
 ### Fallback to `approxCount`
 
@@ -150,8 +150,8 @@ When the adapter exposes a `count` method (optional on `ProviderAdapter`), `coun
 
 - **Per message:** adds `ROLE_OVERHEAD = 4` tokens (accounts for the role prefix and message delimiter in the serialized prompt format).
 - **String content:** `Math.ceil(length / 3.5)` — the constant `3.5` chars/token is a reasonable average for English prose and JSON; it underestimates for dense symbol-heavy content and overestimates for whitespace-heavy content.
-- **Multipart content:** iterates parts; text parts use the same character division; image parts use a flat `IMAGE_TOKENS = 512` (a rough mid-range for Anthropic's vision pricing tier).
-- **Tool calls on assistant messages:** each tool call gets `ROLE_OVERHEAD` plus the character-divided estimate of its serialized arguments.
+- **Multipart content:** iterates parts; text parts use the same character division; the `else` branch catches ALL non-text content part types and applies a flat `IMAGE_TOKENS = 512`. Images are the only non-text part type that currently exists, and 512 is calibrated to them (a rough mid-range for Anthropic's vision pricing tier), but any future non-text part type would also receive the 512-token flat estimate as written.
+- **Tool calls on assistant messages:** the branch is guarded by `msg.role === 'assistant' && msg.toolCalls` — only assistant messages that carry tool calls enter this path. Each tool call gets `ROLE_OVERHEAD` plus the character-divided estimate of its serialized arguments. Before the character count, `JSON.stringify(tc.arguments)` is called: the arguments are typed as `unknown` (parsed from the model's JSON output), so serialization is what makes character-counting meaningful — you cannot measure the length of a plain object directly.
 
 ### Why approximate is acceptable
 
@@ -208,7 +208,7 @@ After a successful adapter response, `budget.consume` is called with `resp.usage
 The structured output branch only executes when `options.schema` is present AND `resp.stopReason !== 'tool_call'`. The `tool_call` guard exists because when the model decides to call a tool instead of producing a structured output, its `content` field is either empty or contains a tool-use block — not parseable JSON conforming to the output schema. Attempting to validate tool-call responses against the schema would always fail, producing spurious `ParseError` results. The branch:
 
 1. `JSON.parse(resp.message.content)` — if this throws, returns `ParseError` with code `'parse.response_json'`.
-2. `validate(parsed, options.schema)` — runs the Standard Schema validation; on failure returns the `ValidationError` directly (not re-wrapped).
+2. `validate(parsed, options.schema)` — runs the Standard Schema validation; on failure returns the `ValidationError` directly (not re-wrapped). This is deliberate: in `execute`, the failure semantic is "tool input could not be parsed", so the error is re-wrapped as `ParseError`. In `call`, the failure semantic is already "structured response validation failed" — `ValidationError` with code `'validation.failed'` is precise enough for the caller. The asymmetry is intentional.
 3. On success, sets `output.value = validated.value`.
 
 ### Full `CallOutput` shape
@@ -233,7 +233,7 @@ type CallOutput<T> = {
 
 ### Same compress/budget-check preamble as `call`
 
-The compress step and `assertNotExhausted` check are identical in structure and ordering to `call`. One difference: in `stream`, `assertNotExhausted` throws directly (not caught into a `Result`) because the function signature is `async function*` — generators cannot return a `Result` on error; they can only throw. Callers of `stream` must wrap the iteration in try/catch to handle `BudgetExhausted`. This is a deliberate asymmetry: streaming and non-streaming primitives have different error surfaces due to the generator constraint.
+The compress step and `assertNotExhausted` check are identical in structure and ordering to `call`. One difference: in `stream`, `assertNotExhausted` throws directly (not caught into a `Result`) because the function signature is `async function*` — generators cannot return a `Result` on error; they can only throw. The consequence for callers is that the entire `for await` loop must be wrapped in a try/catch to handle both `BudgetExhausted` and `AdapterError` — there is no `Result` wrapper to inspect. Callers must use `instanceof` to discriminate error types. This is a deliberate asymmetry: streaming and non-streaming primitives have different error surfaces due to the generator constraint.
 
 The `NormalizedRequest` assembly is identical to `call`'s conditional spread pattern across all seven optional fields.
 
