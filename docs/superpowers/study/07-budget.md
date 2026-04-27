@@ -41,7 +41,7 @@ After incrementing, `checkExhaustedAfterConsume()` is called and uses `>` (stric
 if (limits.maxSteps !== undefined && stepsUsed > limits.maxSteps) { ... }
 ```
 
-If the check fires, a `BudgetExhausted` is thrown with the appropriate `budget.steps`, `budget.tokens`, or `budget.dollars` code. The message format is `"Budget exhausted: ${field} used ${used} >= limit ${limit}"` — the wording says `>=` but the check is `>`; the message is describing the semantic condition (the limit has been reached or exceeded) rather than the precise comparison operator used.
+If the check fires, a `BudgetExhausted` is thrown with the appropriate `budget.steps`, `budget.tokens`, or `budget.dollars` code. The message format is `"Budget exhausted: ${field} used ${used} >= limit ${limit}"` — the wording says `>=` but the check is `>`; for the post-consume path the message is an approximation, describing the semantic condition (the limit has been reached or exceeded) rather than the precise comparison operator used.
 
 ## assertNotExhausted()
 
@@ -52,6 +52,8 @@ if (limits.maxSteps !== undefined && stepsUsed >= limits.maxSteps) { ... }
 ```
 
 Called in `call` and `stream` before the adapter invocation. In `call`, the thrown `BudgetExhausted` is caught and returned as `{ ok: false, error }`. In `stream`, it is thrown directly and propagates from the async generator — the `stream` primitive does not wrap budget failures in `Result` because there is no clean place to intercept before the generator yields anything.
+
+The message format is `"Budget already exhausted: ${field} used ${used} >= limit ${limit}"`. Because `assertNotExhausted()` uses `>=`, the `>=` wording in the message is exact — unlike the post-consume path in `consume()`, where the check uses `>` but the message still says `>=` (an approximation).
 
 ### The >= / > asymmetry
 
@@ -104,10 +106,10 @@ if (chunk.type === 'usage' && options.budget) {
 }
 ```
 
-The chunk is still yielded after consume, so callers receive the usage chunk even if `consume` throws — they won't, because `BudgetExhausted` from within the generator propagates as a thrown error from the iterator, terminating the stream. The consume happens inside the loop because streaming usage is only reported in the final `usage` chunk, not distributed across text deltas.
+The `yield chunk` statement comes after the `consume` call in the source. If `consume` throws `BudgetExhausted`, the `yield` is never reached — the exception propagates immediately and the stream terminates. The caller's `for await` loop receives the exception rather than the usage chunk. The consume happens inside the loop because streaming usage is only reported in the final `usage` chunk, not distributed across text deltas.
 
-**`graph` engine** (`packages/graph/src/index.ts`): The graph calls `budget.consume({ input: 0, output: 0 })` once per node execution, before the node function runs. This increments `stepsUsed` by 1 with zero token or dollar impact — it is purely step tracking for graph traversal. The graph uses a duck-type check (`isBudgetExhausted`) rather than `instanceof` to avoid cross-bundle `instanceof` failures when the graph package and the flint package are bundled separately and produce distinct class references.
+**`graph` engine** (`packages/graph/src/index.ts`): The graph calls `budget.consume({ input: 0, output: 0 })` once per node execution, before the node function runs. In `runStream` specifically, consume is also called before the `enter` event is yielded to the caller — the step is counted before the caller's `for await` loop receives any notification that the node is starting. This increments `stepsUsed` by 1 with zero token or dollar impact — it is purely step tracking for graph traversal. The graph uses a duck-type check (`isBudgetExhausted`) rather than `instanceof` to avoid cross-bundle `instanceof` failures when the graph package and the flint package are bundled separately and produce distinct class references.
 
-In `run`, the consume error is caught and returned as `{ ok: false, error }`. In `runStream`, the consume is bare — the thrown `BudgetExhausted` propagates directly from the async generator, terminating iteration. This is consistent with `stream` primitive behavior.
+In `run`, the consume error is caught and returned as `{ ok: false, error }`. In `runStream`, the consume is bare — the thrown `BudgetExhausted` propagates directly from the async generator, terminating iteration. This is consistent with `stream` primitive behavior. The reason `runStream` cannot wrap the error in a `Result` is structural: async generators have no mechanism to return a value on error — they can only `throw` or `yield`. Since `runStream` is an async generator, any error from `consume` is propagated as a thrown exception from the iterator; there is no other option available.
 
 The graph's step tracking stacks on top of any per-call budget consumption happening inside node functions. A node that calls `call(...)` with the same budget will trigger both the graph's pre-node consume (one step) and `call`'s post-response consume (another step plus tokens and dollars). The two counts are additive in the same budget instance.
