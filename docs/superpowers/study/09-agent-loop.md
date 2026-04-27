@@ -18,9 +18,9 @@ export type Step = {
 
 A `Step` captures a single tool-using iteration — the round trip from sending a message array to receiving tool results. It records six fields:
 
-**`messagesSent`** is the message array snapshot sent to the adapter at this iteration. It is constructed as `[...messages]` — a shallow copy of the live accumulator at the point after tool results have been appended and before the next `call`. The copy is essential for replay fidelity: by the time the caller inspects a `Step`, the live `messages` array has grown by however many subsequent turns occurred. A reference to the live array would silently show future state. A snapshot means `step.messagesSent` is a point-in-time view of exactly what was submitted — you can re-run that exact array against the adapter independently and get the same response (modulo model nondeterminism). This is the primary debugging primitive for tracing what context the model saw at any given turn.
+**`messagesSent`** is the accumulated `messages` array at the end of step N — after the assistant message and all tool result messages from step N have been appended. It is constructed as `[...messages]` — a shallow copy taken at that point. The copy is essential for replay fidelity: by the time the caller inspects a `Step`, the live `messages` array has grown by however many subsequent turns occurred. A reference to the live array would silently show future state. A snapshot means `step.messagesSent` is a point-in-time record of the conversation state after step N completed — you can use it to understand exactly what context step N+1 will receive, or to re-run from that point independently.
 
-Note the placement: `messagesSent` is set after both the assistant message and all tool result messages have been pushed onto `messages`, not before. This means `messagesSent` on step N contains the tool results from step N's execution, making it a complete record of what step N+1 will receive.
+Note the placement: `messagesSent` is captured after both the assistant message and all tool results from step N have been pushed onto `messages`. This means `step.messagesSent` represents the state after step N completes — it contains everything through and including step N's tool results.
 
 **`assistant`** is the raw assistant message returned by `call` at this iteration. Typed as `Message & { role: 'assistant' }` — the intersection is enforced at the source because `call` always returns `resp.message` which the adapter constructs with `role: 'assistant'`. Storing this separately (rather than finding it in `messagesSent`) makes the tool-call extraction obvious without needing to search the snapshot array.
 
@@ -57,7 +57,7 @@ export type AgentOutput = {
 export type ToolsCtx = { messages: Message[]; step: number };
 ```
 
-Context threaded to a lazy `tools` function. `messages` is the current live accumulator (the same reference the loop builds, not a copy) — the function can inspect the full conversation history to decide which tools to expose. `step` is `steps.length` at the point of resolution, i.e. 0 for the first iteration, 1 for the second. A lazy tool function can use both: for example, returning a restricted tool set for the first call and expanding it after the model has gathered initial information.
+Context threaded to a lazy `tools` function. `messages` is the current live accumulator (the same reference the loop builds, not a copy) — the function can inspect the full conversation history to decide which tools to expose. `step` is `steps.length` at the point of resolution, i.e. 0 for the first iteration, 1 for the second. `steps.length` equals the number of tool-using turns that have completed so far — this is exactly the information a dynamic tool factory needs to reason about what stage the agent is in, for example providing a different tool set on the first iteration versus subsequent ones. A lazy tool function can use both fields: for example, returning a restricted tool set for the first call and expanding it after the model has gathered initial information.
 
 ## ToolsParam
 
@@ -105,9 +105,11 @@ export type AgentOptions = {
 
 **`onStep?: (step: Step) => void`** — called synchronously after each non-terminal step is pushed to `steps`. The return value is not `await`-ed — the callback is fire-and-forget. This is intentional: a slow `onStep` (e.g. writing a step to a database) must not stall the agent loop. Callers that need async step handling must manage that internally.
 
+Important caveat: a synchronously throwing `onStep` callback will crash the agent loop — the source has no try/catch around the `options.onStep?.(step)` call. Async errors are treated differently: if `onStep` returns a rejected Promise, it is silently dropped because the call is not awaited. The distinction matters: sync throw = agent crash, async throw = silent drop.
+
 **`compress?: Transform`** — forwarded verbatim to each `call` invocation. The same transform runs on every iteration. The compress pipeline sees the full accumulated `messages` array before each call, so transforms like `windowLast` and `dedup` naturally adapt to the growing history.
 
-**`signal?: AbortSignal`** — forwarded to each `call`, which passes it to the adapter. Cancellation aborts the in-flight adapter request; any already-completed tool executions in the same step are not undone. If the signal fires mid-`Promise.all` over tool calls, only the `call` that follows will check it — there is no cancellation propagation into individual tool handlers via this signal.
+**`signal?: AbortSignal`** — forwarded to each `call`, which passes it to the adapter. Cancellation aborts the in-flight adapter request; any already-completed tool executions in the same step are not undone. If the signal fires mid-`Promise.all` over tool calls, only the `call` that follows will check it — there is no cancellation propagation into individual tool handlers via this signal. Specifically: once `Promise.all` is entered for parallel tool execution, tool handlers run to completion regardless of the signal. There is no mid-execution interrupt. A slow handler will not be stopped by an abort — cancellation only takes effect at the next `call` inside the adapter, after all tool results have been collected.
 
 **`logger?`** — forwarded to `call`. The agent itself emits no logs; all logging happens inside the `call` primitive and the adapter.
 
@@ -138,7 +140,7 @@ const content =
 
 String output is used verbatim. Non-string output is `JSON.stringify`-ed. The model receives strings, so all tool results must be text; JSON serialization is the universal bridge for structured output. Handlers that return primitives (numbers, booleans) go through the `else` branch and are stringified as their JSON literal form.
 
-**Error message concatenation.** On failure, `execute` returns a `ToolError` or `ParseError`. `runToolCall` concatenates the wrapper message and the cause:
+**Error message concatenation.** On failure, `execute` returns a `ToolError`, `ParseError`, or `TimeoutError`. The handling in `runToolCall` uses the same error-string path for all three:
 
 ```ts
 let errorMsg = execResult.error.message;
@@ -148,7 +150,9 @@ if (execResult.error.cause instanceof Error) {
 return { role: 'tool', content: `Error: ${errorMsg}`, toolCallId: tc.id };
 ```
 
-Two levels of error text are surfaced: the `ToolError`/`ParseError` wrapper message (e.g. `Tool "search" handler threw`) and the underlying cause message (e.g. `ECONNREFUSED`). The model sees both, which gives it more signal about what failed. A single-level error message would often be too generic to be actionable. The check `instanceof Error` guards against causes that are non-Error throwables (strings, objects) — in those cases only the wrapper message is used.
+There is a third failure mode beyond `ToolError` and `ParseError`: when a tool's `timeout` fires, `execute` returns `{ ok: false, error: TimeoutError }` directly — it is not wrapped in a `ToolError`. The `TimeoutError` message (e.g. `Tool "foo" timed out after 5000ms`) becomes `errorMsg`. Because `TimeoutError` has no `cause` set (the code constructs it without one), the `instanceof Error` branch is never entered — the model receives only the timeout message, with no concatenated cause. This differs from the `ToolError` path, where the underlying cause message is appended when present.
+
+Two levels of error text are surfaced for `ToolError`/`ParseError`: the wrapper message (e.g. `Tool "search" handler threw`) and the underlying cause message (e.g. `ECONNREFUSED`). The model sees both, which gives it more signal about what failed. A single-level error message would often be too generic to be actionable. The check `instanceof Error` guards against causes that are non-Error throwables (strings, objects) — in those cases only the wrapper message is used.
 
 ## aggregateUsage
 
@@ -203,7 +207,7 @@ export async function agent(options: AgentOptions): Promise<Result<AgentOutput>>
 
 ### Iteration guard
 
-`while (steps.length < maxSteps)` — steps are counted, not iterations. One iteration that does not produce tool calls exits immediately without incrementing `steps`. The guard therefore counts tool-using turns, not total `call` invocations. With `maxSteps = 3`, the agent may make at most 4 calls to the adapter (3 tool-using turns + 1 terminal turn), and at most 3 entries in `steps`. This is slightly subtle: a caller setting `maxSteps = 5` is not limiting adapter calls to 5, but tool-using iterations to 5.
+`while (steps.length < maxSteps)` — steps are counted, not iterations. One iteration that does not produce tool calls exits immediately without incrementing `steps`. The guard therefore counts tool-using turns, not total `call` invocations. With `maxSteps = 3`, the agent may make at most 4 calls to the adapter (3 tool-using turns + 1 terminal turn), and at most 3 entries in `steps` — assuming no adapter error or budget exhaustion on the terminal call; those would return `{ ok: false }` from the terminal call's result, not from the max-steps path. This is slightly subtle: a caller setting `maxSteps = 5` is not limiting adapter calls to 5, but tool-using iterations to 5.
 
 ### Lazy tool resolution per iteration
 
@@ -297,7 +301,7 @@ steps.push(step);
 options.onStep?.(step);
 ```
 
-`messagesSent` is captured after both the assistant message and all tool results have been pushed. This means `step.messagesSent` represents what the next iteration will receive as its `messages` argument — it is a forward-looking snapshot, not the snapshot of what was sent to produce this step's assistant response. Put differently: step N's `messagesSent` is the input to step N+1's `call`, not the input to step N's `call`. This is consistent with the naming: "messages sent" refers to the batch submitted on the next call, which includes this step's results.
+`messagesSent` is captured after both the assistant message and all tool results have been pushed. This means `step.messagesSent` is the accumulated `messages` array at the end of step N — a complete record of the conversation state after step N completes. Because the next call will receive this same array as its starting `messages`, it is identical to what step N+1 will receive — but the framing is "state after step N" rather than "input to step N+1." The name reflects what was accumulated through this step, not a forward projection.
 
 `onStep` is called synchronously after the step is pushed. The callback receives the same `Step` object that is now in `steps` — mutations to it by the callback would affect `steps` in place. Callers should treat the `Step` as read-only.
 
