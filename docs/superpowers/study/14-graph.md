@@ -98,6 +98,8 @@ Three event types emitted by `runStream`:
 - `exit` — emitted immediately after the node function returns; `state` is the post-execution state (may differ from `enter`'s state)
 - `edge` — emitted after edge resolution; `state` is the post-execution (or post-fan-out-merge) state at the moment the transition is taken
 
+The `edge` event's `to` field is typed as `string` — not `string | string[]`. This is true even when a fan-out runs multiple targets. Because `Edge<S>` declares `to: string | string[]`, a reader might assume the event mirrors the edge definition, but it does not: `runStream` always places a single string in `to`. In the fan-out path that value is `targets[0]` — only the first fan-out target. The remaining parallel targets do not appear in the `edge` event at all. Callers who need to know every activated target in a fan-out should track `enter` events, which are emitted once per activated node.
+
 `state` is included in every event rather than emitted only on change. This gives callers a complete snapshot at each observation point without any bookkeeping on their side: a UI rendering the current state after each step just reads `event.state` from the last `exit` event; a logger recording state evolution does the same from every event in sequence. Omitting `state` from `edge` events would force callers to track which `exit` event's state corresponds to which `edge` event — an error-prone correlation.
 
 ## graph\<S\> factory
@@ -184,6 +186,8 @@ function resolveNext(to: string | string[]):
 3. **Array with exactly one element** (`to.length === 1`): treated as `{ fanOut: false, next: to[0] }` — syntactic convenience for authors who write `to: ['nodeName']`; no fan-out overhead.
 4. **Empty array** (`to.length === 0`): throws `FlintError` with code `graph.invalid_edge` immediately — an edge with no destination is a definition error.
 
+(Note on source structure: the implementation does not have four independent branches. After the `to.length > 1` fan-out check, cases 3 and 4 share a single `else` path. That path reads `to[0]` and distinguishes the two sub-cases by whether `to[0] === undefined`: if it is undefined the array was empty and `FlintError` is thrown; otherwise the single element is used as `next`. The conceptual grouping above is accurate, but the branch count in source is two — `length > 1` and `else`.)
+
 ### Fan-out mechanics
 
 ```ts
@@ -199,6 +203,8 @@ currentNode = firstTarget;
 All fan-out targets receive the same `preState` — the state before any of them ran. They execute concurrently via `Promise.all`. Their results are merged with `Object.assign` into a fresh object: a shallow left-to-right merge where later targets' keys overwrite earlier ones. The merge produces the new `st`.
 
 After fan-out, `currentNode` is set to `resolved.targets[0]` — the first target in the array. This is the node used for the next `findEdgesFrom` lookup, meaning the graph continues from whichever fan-out target is listed first. Graph authors must account for this when designing fan-out + convergence patterns: only the first target's outgoing edges are followed after the merge.
+
+In `runStream`, the `edge` event emitted after a fan-out carries `to: firstTarget` — only `targets[0]`. The remaining parallel targets are not represented in the event. Callers who need to know every node that was activated in a fan-out step should observe `enter` events instead, which are emitted once per activated node.
 
 The fan-out model is intentionally shallow. It does not recursively resolve edges for each fan-out target — it only executes the node function and merges state. This keeps fan-out semantics predictable: it is a single parallel execution step, not a recursive sub-graph.
 
