@@ -97,7 +97,7 @@ export function truncateToolResults(opts: TruncateOpts): Transform {
 }
 ```
 
-**`maxChars > 50` guard.** The check throws at construction time, not at transform execution time. A `maxChars` of 10 would produce a marker string (e.g. `…[truncated, 9990 chars dropped]`) that is itself longer than `maxChars`, making `sliceLen` go negative and `slice(0, negative)` return an empty string — the tool result would be entirely replaced by a truncated marker. The guard at 50 is conservative: it ensures the marker and at least a few characters of actual content can coexist. Throwing at construction rather than returning an error transform catches misconfiguration before any messages are processed.
+**`maxChars > 50` guard.** The check throws at construction time, not at transform execution time. The degenerate outcome the guard prevents is a tool result replaced with *only* the truncation marker and zero retained content. When `maxChars` is very small (e.g. 10), `sliceLen` computes to 0 (clamped by `Math.max(0, ...)`) and the "truncated" result becomes just the marker string — no original content at all, which is meaningless to the model. The guard at 50 is conservative: it ensures the marker and at least a few characters of actual content can coexist. Throwing at construction rather than returning an error transform catches misconfiguration before any messages are processed.
 
 **Slice + marker construction.**
 
@@ -140,7 +140,7 @@ messages.forEach((msg, index) => {
 });
 ```
 
-Each message is tagged with its original array index before partitioning. The `eligible` array is then sliced (`take === 'last'` → `eligible.slice(-keep)`, `take === 'first'` → `eligible.slice(0, keep)`).
+Each message is tagged with its original array index before partitioning. The `eligible` array is then sliced (`take === 'last'` → `eligible.slice(Math.max(0, eligible.length - keep))`, `take === 'first'` → `eligible.slice(0, keep)`). The `Math.max(0, ...)` form is used instead of `eligible.slice(-keep)` because of a JavaScript quirk: `eligible.slice(-0)` returns the full array, whereas `eligible.slice(Math.max(0, eligible.length - 0))` correctly returns `[]` when `keep === 0`.
 
 ### Sort by original index after merge
 
@@ -177,7 +177,7 @@ export type SummarizeOpts = {
 if (messages.length < keepLast + 2) return messages;
 ```
 
-`keepLast` defaults to `4`. The guard ensures at least `keepLast + 2` messages exist before proceeding: `keepLast` messages to keep, at least 1 message to summarize (`toSummarize` slice), and 1 margin message (the `+2` covers the requirement that `toSummarize` is non-empty with some buffer). If the guard were `keepLast + 1`, it would be possible to call summarize with a single message to summarize and `keepLast` messages to keep, which is technically valid but produces a nearly useless summary. The guard exits early returning the unchanged messages — summarize is always fail-open.
+`keepLast` defaults to `4`. The guard ensures at least `keepLast + 2` messages exist before proceeding. Given `toSummarize = messages.slice(0, messages.length - keepLast)`, for `toSummarize` to be non-empty you need `messages.length >= keepLast + 1`. The guard uses `keepLast + 2`, which requires at least 2 messages in `toSummarize`. Requiring at least 2 messages to summarize is a defensible minimum — a single-message summary is often trivial or redundant, and the guard enforces a meaningful lower bound on what gets sent to the summarizer LLM. The guard exits early returning the unchanged messages — summarize is always fail-open.
 
 ### Summarization mechanics
 
@@ -209,6 +209,8 @@ return [{ role: 'system', content: `Summary of prior conversation: ${summary}` }
 
 The summary is injected as a `system` message prepended to `toKeep`. Using `role: 'system'` signals to the model that this is contextual background, not part of the user-assistant exchange. The prefix string `"Summary of prior conversation: "` is literal in the output — it disambiguates the injected summary from any user-authored system instructions that may also be in `toKeep`.
 
+**Downstream interaction with `windowLast` / `windowFirst`.** Because the injected summary has `role: 'system'`, it falls into `alwaysKeep: ['system']` (the default) in any subsequent `windowLast` or `windowFirst` in the same pipeline. For example, `pipeline(summarize(...), windowLast(...))` ensures the summary is never windowed away — it is always present in the output. This is almost certainly intentional: the summary is synthesized context that should never be silently dropped, just like static system instructions.
+
 ## orderForCache
 
 ```ts
@@ -229,6 +231,6 @@ export function orderForCache(): Transform {
 
 **Why this helps Anthropic's prompt cache.** The Anthropic adapter injects `cache_control: { type: 'ephemeral' }` on the last system block in the request. Anthropic's cache mechanism works by identifying a stable prefix of the token stream that is shared across multiple requests. System messages (instructions, persona, tool definitions) are semantically stable across turns — they don't change between the first user message and the tenth. By moving all system messages to the front, `orderForCache` maximizes the stable prefix: cache hits occur when the token prefix up to the cache breakpoint is identical between two requests. If system messages were interleaved with user and assistant turns, the stable prefix would end at the first non-system message (which changes every turn), and the cache would never hit past that point.
 
-Placing system messages at the front concentrates all the stable content at the head of the token stream. The Anthropic adapter then marks the last system block, maximizing the length of the cached prefix and improving cache hit rate for long-running agents where system content is constant but conversation content grows.
+Placing system messages at the front concentrates all the stable content at the head of the token stream. The Anthropic adapter then marks the last system block (adapter behavior, not pipeline behavior — `compress.ts` only reorders messages and never touches `cache_control`; the injection happens in `packages/adapter-anthropic/src/index.ts`, covered in Doc 04), maximizing the length of the cached prefix and improving cache hit rate for long-running agents where system content is constant but conversation content grows.
 
 `orderForCache` preserves the relative order within the system group and within the non-system group. It does not sort messages by any other criterion. The transform is a no-op for message arrays that are already in the correct order.
