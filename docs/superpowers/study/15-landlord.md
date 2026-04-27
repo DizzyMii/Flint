@@ -40,7 +40,7 @@ export const ContractSchema = z.object({
 - `objective`: one-sentence description of what the tenant must accomplish. Appears verbatim in the system prompt as `Objective: ${contract.objective}`.
 - `subPrompt`: the task text the tenant receives as the user message. Decouples the objective (what it must do) from the prompt (what it is told). The LLM decomposing the job writes both — the objective is for the system prompt's framing, the subPrompt is the concrete instructions fed as the user turn.
 - `checkpoints`: ordered list of milestones the tenant must declare. Each checkpoint becomes a tool the tenant can call. The order matters for the system prompt's checkpoint instruction list but not for pass/fail accounting — all must be passed regardless of call order.
-- `outputSchema`: JSON Schema for the tenant's output as a whole. Stored on the contract but not currently validated against the final `artifacts` record in `runTenant` — it is passed to the LLM during decompose so the LLM can write a schema describing what the tenant will produce. Future enforcement would call AJV against `artifacts` before `runTenant` returns `ok`.
+- `outputSchema`: JSON Schema for the tenant's output as a whole. Stored on the contract and passed to the LLM during decompose so the LLM can write a schema describing what the tenant will produce. `outputSchema` is collected but unused after decompose — it is not referenced in `orchestrate.ts`, `tenant.ts`, or `validate.ts`. Validating `artifacts` against `outputSchema` before `runTenant` returns `ok` would be a natural extension point, but this is speculation about a possible future addition, not stated design intent.
 - `toolsAllowed` / `toolsDenied`: optional lists of tool names for per-tenant filtering. Defaults to `undefined` — when both are absent, all user tools pass through. See `filterTools` below.
 - `dependsOn`: `default([])` — defaults to an empty array, meaning independent tenants require no explicit `dependsOn` declaration. Values are `role` strings, not `tenantId`s — the dependency graph is keyed on human-readable role names.
 - `maxRetries`: `default(3)` — maximum number of agent-run attempts before escalation. The retry loop in `runWithRetry` runs `for (let attempt = 0; attempt < contract.maxRetries; attempt++)`, so `maxRetries: 3` allows exactly three full agent runs.
@@ -326,6 +326,8 @@ This pattern replaces a dependency graph executor: instead of computing which te
 
 All contracts are dispatched concurrently via `Promise.all(plan.map((c) => runWithRetry(c)))`. Independent tenants (empty `dependsOn`) begin immediately. Dependent tenants block at their `await gates.get(dep)?.promise` calls until dependencies resolve. The effect is maximum parallelism within the dependency constraints.
 
+**Why the gate pattern over a queue-based scheduler.** The gate pattern requires zero scheduling logic — it is purely reactive. Each tenant awaits its own dependency gates and proceeds when they resolve, with no central scheduler, no work queue, and no topology walker needed. `Promise.all` over all contracts lets the JS event loop handle all concurrency naturally. This simplicity is the key architectural advantage and the reason the gate pattern was chosen over a queue-based dispatcher.
+
 ### runWithRetry — lifecycle
 
 ```ts
@@ -367,19 +369,21 @@ async function runWithRetry(contract: Contract): Promise<void> {
 
 **sharedArtifacts namespacing.** Artifact keys are prefixed as `${dep}.${key}`. If tenants A and B both produce an artifact named `result`, the current tenant receives them as `A.result` and `B.result` — no collision. The tenant's system prompt receives this map serialized as JSON, and the model can reference specific artifacts by their namespaced keys.
 
-**toolsFactory per attempt.** `toolsFactory(workDir)` is called once per attempt iteration, not once per contract. This gives the caller the opportunity to create fresh tool instances per attempt if needed (e.g. tools that hold internal state). In practice most tool factories return stateless tools, so the per-attempt call is redundant but not harmful.
+**sharedArtifacts double-guard.** In `orchestrate.ts`, `sharedArtifacts` is passed to `runTenant` via the ternary `Object.keys(sharedArtifacts).length > 0 ? sharedArtifacts : undefined` — an empty object is never passed; `undefined` is passed instead. Inside `buildSystemPrompt`, there is a second guard: `sharedArtifacts !== undefined && Object.keys(sharedArtifacts).length > 0`. The two guards together are defensive redundancy: the outer guard ensures `orchestrate` never passes an empty object, while the inner guard handles the case where `runTenant` is called directly (bypassing `orchestrate`) with an `undefined` value. Any caller that constructs an empty `sharedArtifacts` and passes it directly would also be handled correctly by the inner guard.
+
+**toolsFactory per attempt.** `toolsFactory(workDir)` is called once per attempt iteration, not once per contract. `workDir` is created once before the retry loop (via `mkdir`) and the same path is passed to `toolsFactory` on every attempt — the directory is not recreated or cleared between retries. The freshness benefit of per-attempt `toolsFactory` calls applies to tool instance state (e.g. a fresh database connection object), not to the directory path itself. In practice most tool factories return stateless tools, so the per-attempt call is redundant but not harmful.
 
 **Gate resolved with `{}` on escalation.** An escalated tenant cannot produce artifacts, so its gate resolves with an empty object. Dependents of an escalated tenant will see `escalatedRoles.has(dep)` is true and immediately propagate escalation without attempting to read artifacts from `jobArtifacts[dep]` (which would be absent or empty).
 
 ### onEvent callback lifecycle
 
 Events in order per tenant:
-1. `tenant_started` — emitted at the start of `runWithRetry`, after dependencies are resolved, before the first attempt.
+1. `tenant_started` — emitted after dependency gates resolve and after `mkdir(workDir)` creates the tenant's work directory, but before the first attempt. The ordering is: dependency resolution → `mkdir(workDir)` → `tenant_started` event. This ordering is observable for event listeners that perform filesystem operations, since the directory is guaranteed to exist when `tenant_started` fires.
 2. `tenant_evicted` — emitted after each failed attempt (before the next retry). `retry` is 1-indexed: first failure emits `retry: 1`.
 3. One of:
    - `tenant_complete` — emitted when an attempt returns `result.ok === true`.
    - `tenant_escalated` — emitted when all retries are exhausted or escalation propagated from a dependency.
-4. `checkpoint_passed` / `checkpoint_failed` — emitted inside `runTenant` via the checkpoint tool handler. These are not currently implemented in `runTenant` itself — the current code does not call `onEvent` from within `runTenant`. The event type is defined in `LandlordEvent` but the `onEvent` callback is not passed into `runTenant`. This means `checkpoint_passed` and `checkpoint_failed` events are declared in the type union but not yet emitted in the running code.
+4. `checkpoint_passed` / `checkpoint_failed` — these event types are declared in `LandlordEvent`, but `onEvent` is not passed into `runTenant`, so they are currently never emitted. This is a fact about the current design: `orchestrate.ts` holds the `onEvent` callback and passes it to nothing inside `runTenant`. There is no TODO or reserved parameter slot in the source indicating these are planned; the type union simply declares them as valid event shapes.
 5. `job_complete` — emitted once after `Promise.all` resolves, regardless of whether the job status is `complete` or `partial`. Carries the full `jobArtifacts` map.
 
 **`complete` vs `partial` status.** `status` is `'complete'` only if every tenant outcome is `status: 'complete'`. Any escalated tenant causes the job to be `'partial'`. The `orchestrate` return is always `{ ok: true, value: OrchestrateResult }` — `orchestrate` itself does not fail when tenants escalate; it returns `partial` so callers can inspect which tenants succeeded and which failed and act accordingly.
@@ -393,8 +397,10 @@ Events in order per tenant:
 ### Tier 1: JSON Schema (AJV)
 
 ```ts
+// Module-level singleton — declared once at module scope in validate.ts
 const ajv = new Ajv({ allErrors: true });
 
+// Inside validateCheckpoint:
 let validate: ReturnType<typeof ajv.compile>;
 try {
   validate = ajv.compile(checkpoint.schema);
@@ -409,7 +415,9 @@ if (!tier1Pass) {
 }
 ```
 
-AJV validates the checkpoint output against the checkpoint's `schema` field. `allErrors: true` collects all validation errors rather than stopping at the first — `ajv.errorsText(validate.errors)` produces a human-readable summary that serves as the `explanation` in the returned verdict. If `checkpoint.schema` is not a valid JSON Schema (i.e. AJV's `compile` throws), the fallback `{ type: 'object' }` schema is used, which accepts any non-null object. The fallback prevents a malformed checkpoint schema from crashing the entire tenant — it degrades to structural-only validation (tier 1 always passes) with semantic validation left to the LLM judge (tier 2).
+`ajv` is a module-level singleton — `new Ajv({ allErrors: true })` is called once when `validate.ts` is loaded, not once per `validateCheckpoint` call. AJV caches compiled validators internally on the singleton, so a schema compiled during one checkpoint validation call is reused on subsequent calls within the same process. `validateCheckpoint` calls `ajv.compile` to obtain a validator for the specific checkpoint schema, but AJV's internal cache means repeated calls with the same schema object do not recompile.
+
+`allErrors: true` collects all validation errors rather than stopping at the first — `ajv.errorsText(validate.errors)` produces a human-readable summary that serves as the `explanation` in the returned verdict. If `checkpoint.schema` is not a valid JSON Schema (i.e. AJV's `compile` throws), the fallback `{ type: 'object' }` schema is used, which accepts any non-null object. The fallback prevents a malformed checkpoint schema from crashing the entire tenant — it degrades to structural-only validation (tier 1 always passes) with semantic validation left to the LLM judge (tier 2).
 
 Tier 1 failure returns `{ ok: true, value: { passed: false, explanation } }` — the function itself succeeded (no error), but the verdict is `passed: false`. The checkpoint tool handler in `runTenant` then returns the failure message to the model, which can revise its output and retry the checkpoint call.
 
