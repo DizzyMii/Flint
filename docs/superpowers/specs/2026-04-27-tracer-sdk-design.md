@@ -33,7 +33,7 @@ Ship a zero-config TypeScript SDK that auto-instruments Vercel AI SDK calls and 
 
 ### Approach
 
-Implement a thin custom `SpanExporter` on top of `@opentelemetry/sdk-trace-base`. The OTel package provides battle-tested `BatchSpanProcessor` (buffering, retry, flush) — the SDK only writes the HTTP export layer and the OTLP conversion.
+Implement a thin custom `SpanExporter` on top of `@opentelemetry/sdk-trace-base`. The OTel package provides battle-tested `BatchSpanProcessor` (buffering, timed flush) — the SDK only writes the HTTP export layer and the OTLP conversion.
 
 ### Package structure
 
@@ -99,7 +99,7 @@ export class TracerExporter implements SpanExporter {
 }
 ```
 
-Error handling: non-2xx responses and network failures both resolve to `ExportResultCode.FAILED`. The `BatchSpanProcessor` handles retries (up to 3, exponential backoff). Failures are silent to the application — observability failures must never crash production code.
+Error handling: non-2xx responses and network failures both resolve to `ExportResultCode.FAILED`. `BatchSpanProcessor` does not retry on failure — spans in the failed batch are dropped silently. Failures must never throw into application code.
 
 ### `src/provider.ts`
 
@@ -141,7 +141,7 @@ Vercel AI SDK call
   → toOtlpPayload(batch) → OtlpPayload JSON
   → POST /v1/traces { Authorization: Bearer <apiKey> }
   → 202 Accepted → ExportResultCode.SUCCESS
-                 → ExportResultCode.FAILED (retried by BatchSpanProcessor, then dropped)
+  → non-2xx / error → ExportResultCode.FAILED → batch silently dropped
 ```
 
 ---
@@ -203,11 +203,10 @@ await flush()
 
 | Scenario | Behavior |
 |---|---|
-| Ingest endpoint returns non-2xx | `FAILED` — BatchSpanProcessor retries up to 3x, then drops |
-| Network error (fetch throws) | `FAILED` — same retry path |
-| Spans lost after retries | Silently dropped — never throws into application code |
+| Ingest endpoint returns non-2xx | `FAILED` — batch silently dropped |
+| Network error (fetch throws) | `FAILED` — batch silently dropped |
 | `flush()` called with empty buffer | Resolves immediately, no-op |
-| Invalid `apiKey` / `url` | 401 from ingest → `FAILED` → spans dropped after retries |
+| Invalid `apiKey` / `url` | 401 from ingest → `FAILED` → batch silently dropped |
 
 ---
 
