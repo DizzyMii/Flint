@@ -171,7 +171,7 @@ Flint's `ToolCall.arguments` is `unknown` (already parsed). The OpenAI wire form
 { type: 'image_url', image_url: { url: `data:${part.mediaType};base64,${part.data}` } }
 ```
 
-Both Flint image variants collapse to `image_url` — OpenAI has no separate base64 type. Inline images are encoded as data-URLs with the `data:<mediaType>;base64,<data>` scheme.
+Both Flint image variants collapse to `image_url` — OpenAI has no separate base64 type. Inline images are encoded as data-URLs with the `data:<mediaType>;base64,<data>` scheme. This mapping is exhaustive: Flint's `ContentPart` has exactly three variants — `text`, `image`, and `image_b64` (as established in Doc 01) — so the three cases in `normalizeMessages` cover all possible content parts.
 
 **No cache_control.** The Anthropic normalizer emits `cache_control: { type: 'ephemeral' }` on content parts for prompt caching. This adapter omits it entirely (`capabilities.promptCache: false`).
 
@@ -234,7 +234,7 @@ if (buffer.trim()) {
 }
 ```
 
-After the reader signals `done`, any unconsumed content in `buffer` (a chunk that arrived without a trailing `\n\n`) is parsed and yielded. The Anthropic adapter relies on the `\n\n` double-newline delimiter always being present before stream close and does not need this flush. OpenAI providers may not guarantee a trailing `\n\n` after `[DONE]`.
+After the reader signals `done`, any unconsumed content in `buffer` (a chunk that arrived without a trailing `\n\n`) is parsed and yielded. This flush guards against one specific scenario: a provider that closes the TCP connection immediately after writing `data: [DONE]\n` without writing the second `\n`, leaving the SSE event in the buffer without its terminating double-newline. Note that the `TextDecoder` is used with `{ stream: true }` during the read loop but the adapter does not call `decode()` a final time after stream close — the flush is purely a buffer-string check, not a decoder-flush. The Anthropic adapter does not need this because `message_stop` always arrives as a properly terminated SSE event before stream close.
 
 ---
 
@@ -327,6 +327,10 @@ for (const [, stash] of toolStash) {
 
 The Anthropic adapter yields `tool_call` chunks on `content_block_stop` events during streaming, because each tool call is a discrete content block with explicit open/close events. OpenAI has no such per-tool lifecycle — the adapter must wait until `[DONE]` to know all argument fragments have arrived before parsing and yielding.
 
+**Mid-stream error events:**
+
+OpenAI providers can signal a mid-stream error via an `event: error` SSE frame (rather than an HTTP error status). The adapter checks for this at the top of the event loop: if `event === 'error'`, it JSON-parses `data` and throws `AdapterError` with code `adapter.stream` and the parsed object as `cause`. This means the `stream()` async generator can throw mid-iteration — callers using `for await` will have the error propagate out of the loop as a thrown exception.
+
 **Usage from the last chunk:**
 
 ```ts
@@ -336,7 +340,7 @@ if (chunk.usage) {
 }
 ```
 
-Usage is read from any chunk that carries it (in practice the final chunk, when `stream_options.include_usage` is set by the provider). The values are accumulated in local variables and yielded after `[DONE]` along with the end chunk:
+Usage is read from any chunk that carries it. The values are accumulated in local variables and yielded after `[DONE]` along with the end chunk:
 
 ```ts
 yield { type: 'usage', usage: { input: promptTokens, output: completionTokens } };
