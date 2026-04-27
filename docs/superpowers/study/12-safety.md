@@ -66,7 +66,7 @@ Targets prompt-extraction commands. `(?:system\s+)?` makes the word "system" opt
 /<\/?\s*untrusted\b[^>]*>/i
 ```
 
-Catches attempts to forge the `<untrusted>` wrapper tags that the `boundary` module uses to delimit untrusted content. Without this pattern, an attacker could inject a closing `</untrusted>` tag inside their content to escape the untrusted block and have subsequent text treated as trusted. `<\/?` matches both open and close tags; `\b[^>]*` allows for attributes (including a forged nonce attempt).
+Catches attempts to forge the `<untrusted>` wrapper tags that the `boundary` module uses to delimit untrusted content. Without this pattern, an attacker could inject a closing `</untrusted>` tag inside their content to escape the untrusted block and have subsequent text treated as trusted. `<\/?` matches both open and close tags; `\b[^>]*` allows for attributes (including a forged nonce attempt). The `\s*` between `<\/?` and the tag name catches obfuscation attempts that insert whitespace after the slash — for example `< /untrusted>` or `</ untrusted>` — spacing variations that a naive `<\/untrusted` literal would miss.
 
 ### Snippet context window
 
@@ -80,7 +80,7 @@ const end = Math.min(text.length, match.index + match[0].length + SNIPPET_CONTEX
 
 ### Return shape — all matches, not first
 
-`detectPromptInjection` iterates every pattern with `regex.exec` (stateless; each call starts from index 0 on a non-`g` regex) and appends to `matches` for each hit. The function returns `{ detected: boolean, matches: InjectionMatch[] }` where `matches` contains every pattern that fired, not just the first. The design rationale: a caller blocking on `detected` gets a simple boolean gate; a caller building an audit log or explainability UI gets the full list of attack vectors present. Stopping at the first match would hide compound attacks (an input that combines `ignore_instructions` with `leak_prompt`) and make logging incomplete.
+`detectPromptInjection` iterates every pattern with `regex.exec` (stateless; each call starts from index 0 on a non-`g` regex — if any pattern carried the `g` flag, calling `regex.exec` or `test` on the same regex object across invocations would advance `lastIndex`, causing the pattern to silently skip matches on subsequent calls and requiring a manual `lastIndex = 0` reset before each use; by omitting `g`, the patterns are always stateless and safe to call any number of times without resetting) and appends to `matches` for each hit. The function returns `{ detected: boolean, matches: InjectionMatch[] }` where `matches` contains every pattern that fired, not just the first. The design rationale: a caller blocking on `detected` gets a simple boolean gate; a caller building an audit log or explainability UI gets the full list of attack vectors present. Stopping at the first match would hide compound attacks (an input that combines `ignore_instructions` with `leak_prompt`) and make logging incomplete.
 
 ---
 
@@ -98,7 +98,7 @@ A left fold over the patterns array. Each iteration produces a new string with t
 
 ### `redactMessage`
 
-`redactMessage` dispatches on `typeof msg.content`. When content is `string` (system, assistant, tool roles), it calls `redactString` directly. When content is `ContentPart[]` (user role only), it maps over the array: `text` parts pass their `.text` field through `redactString`; all other part types (image, image_b64) are passed through unchanged. Image parts carry URLs or base64 blobs that cannot contain secrets in the relevant formats; including them in the replace loop would be wasted work and risks corrupting binary-encoded data.
+`redactMessage` dispatches on `typeof msg.content`. When content is `string` (system, assistant, tool roles), it calls `redactString` directly. When content is `ContentPart[]` (user role only), it maps over the array: `text` parts pass their `.text` field through `redactString`; all other part types (image, image_b64) are passed through unchanged. Image parts carry URLs or base64 blobs and are left unchanged. Running regex over a base64-encoded blob is ineffective because encoding transforms each token's character sequence, breaking pattern matching against the original bytes. It is also potentially destructive: a partial replacement inside a base64 string would corrupt the encoding. The `secretPatterns` are designed for inline text tokens and are simply not applicable to binary-encoded data.
 
 ### `secretPatterns`
 
@@ -126,6 +126,8 @@ export function redact(opts: RedactOptions): Transform {
 ```
 
 `Transform` is the type used by the compress pipeline (Doc 08). A `Transform` is `(messages: Message[]) => Promise<Message[]>`. Returning a `Transform` from `redact` means it can be passed directly to `pipeline()` alongside compression and summarisation transforms without any adapter code. The caller composes safety and compression in a single pipeline call; the runtime invokes them in order before each inference request.
+
+The returned function is declared `async` even though there is no `await` inside it. The reason is purely type-mechanical: `Transform` requires a `Promise<Message[]>` return type, and marking the function `async` automatically wraps the synchronous `Array.prototype.map` result in a `Promise`. Without `async`, the return type would be `Message[]`, which does not satisfy `Transform` — the alternative would be an explicit `Promise.resolve(messages.map(...))` wrapper. Using `async` is the cleaner way to satisfy the type contract without adding visual noise.
 
 ---
 
@@ -210,7 +212,7 @@ Denial throws `FlintError` with code `tool.approval_denied`. The agent loop catc
 }
 ```
 
-The `finally` block unconditionally cancels the timer. If `onApprove` resolves before the timeout, the timeout handle is cleared so the timer callback never fires. Without this, the Node event loop stays alive until the timer expires even if the rest of the execution has completed, and in environments with hot-reload or test isolation the lingering callback can fire into a torn-down context.
+The `finally` block unconditionally cancels the timer. If `onApprove` resolves before the timeout, the timeout handle is cleared so the timer callback never fires. Without this, the Node event loop stays alive until the timer expires even if the rest of the execution has completed, and in environments with hot-reload or test isolation the lingering callback can fire into a torn-down context. The most immediate practical consequence is in test environments (Jest, Vitest): an uncleared timer keeps the worker process alive after the test suite finishes, causing a "A worker process has failed to exit gracefully" hang that requires force-killing the process.
 
 ---
 
@@ -238,7 +240,7 @@ export function untrusted(content: string, opts?: UntrustedOptions): string {
 }
 ```
 
-Generates a fresh nonce per call and wraps content in matching open and close tags with the nonce as an attribute on both. The close tag repeats the nonce attribute to make it maximally difficult to forge a valid pair: an attacker would need to know the nonce to close the block, and cannot close it by injecting a nonce-free `</untrusted>` tag (that would be caught by the `untrusted_tag_forgery` detection pattern). The `label` option allows the tag name to be customised when needed, though the detect-injection pattern is hardcoded to `untrusted`.
+Generates a fresh nonce per call and wraps content in matching open and close tags with the nonce as an attribute on both. The close tag repeats the nonce attribute to make it maximally difficult to forge a valid pair: an attacker would need to know the nonce to close the block, and cannot close it by injecting a nonce-free `</untrusted>` tag (that would be caught by the `untrusted_tag_forgery` detection pattern). The `label` option allows the tag name to be customised when needed, though the detect-injection pattern is hardcoded to `untrusted`. This means that if a caller uses a custom `label`, the hardcoded `untrusted_tag_forgery` pattern will not catch forgery attempts against that custom tag. Callers using custom labels in injection-sensitive contexts should either stick to the default `'untrusted'` label or add a parallel `detect-injection` pattern that targets their custom label.
 
 ### `boundary(opts)`
 
