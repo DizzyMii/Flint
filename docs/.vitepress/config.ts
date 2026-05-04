@@ -119,9 +119,7 @@ export default defineConfig({
       '/reference/': [
         {
           text: 'Reference',
-          items: [
-            { text: 'Error Types', link: '/reference/errors' },
-          ],
+          items: [{ text: 'Error Types', link: '/reference/errors' }],
         },
       ],
     },
