@@ -7,6 +7,9 @@
   "sideEffects": false,
   "engines": { "node": ">=20" },
   "files": ["dist", "README.md", "LICENSE"],
+  "publishConfig": {
+    "access": "public"
+  },
   "exports": {
     ".": { "types": "./dist/index.d.ts", "import": "./dist/index.js" }
   },
