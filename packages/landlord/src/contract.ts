@@ -16,7 +16,7 @@ export const ContractSchema = z.object({
   toolsAllowed: z.array(z.string()).optional(),
   toolsDenied: z.array(z.string()).optional(),
   dependsOn: z.array(z.string()).default([]),
-  maxRetries: z.number().default(3),
+  maxRetries: z.number().int().min(1).default(3),
 });
 
 export type Checkpoint = z.infer<typeof CheckpointSchema>;
