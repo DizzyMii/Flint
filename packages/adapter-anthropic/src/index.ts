@@ -288,6 +288,23 @@ async function* parseSSE(
         }
       }
     }
+
+    // Flush any remaining buffer content after the stream closes. A final event
+    // (e.g. message_stop) may not be terminated by a trailing "\n\n".
+    if (buffer.trim()) {
+      let event = '';
+      let data = '';
+      for (const line of buffer.split('\n')) {
+        if (line.startsWith('event: ')) {
+          event = line.slice(7).trim();
+        } else if (line.startsWith('data: ')) {
+          data = line.slice(6);
+        }
+      }
+      if (event && data) {
+        yield { event, data };
+      }
+    }
   } finally {
     reader.releaseLock();
   }

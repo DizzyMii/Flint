@@ -624,6 +624,42 @@ describe('anthropicAdapter — stream()', () => {
     expect(endChunk?.reason).toBe('end');
   });
 
+  it('emits the final event when the stream is not terminated by a blank line', async () => {
+    // Drop the trailing "\n\n" so message_stop sits in the buffer at stream close.
+    const sse = sseBody(
+      {
+        event: 'message_start',
+        data: { message: { usage: { input_tokens: 15, output_tokens: 0 } } },
+      },
+      { event: 'content_block_start', data: { index: 0, content_block: { type: 'text' } } },
+      {
+        event: 'content_block_delta',
+        data: { index: 0, delta: { type: 'text_delta', text: 'Hi' } },
+      },
+      { event: 'content_block_stop', data: { index: 0 } },
+      {
+        event: 'message_delta',
+        data: { delta: { stop_reason: 'end_turn' }, usage: { output_tokens: 3 } },
+      },
+      { event: 'message_stop', data: {} },
+    ).replace(/\n\n$/, '');
+
+    const a = anthropicAdapter({ apiKey: 'test', fetch: mockFetch(sse) });
+    const chunks: StreamChunk[] = [];
+    for await (const chunk of a.stream({
+      model: 'claude-3-5-haiku-20241022',
+      messages: [{ role: 'user', content: 'Hi' }],
+    })) {
+      chunks.push(chunk);
+    }
+
+    const endChunk = chunks.find((c) => c.type === 'end') as
+      | { type: 'end'; reason: string }
+      | undefined;
+    expect(endChunk).toBeDefined();
+    expect(endChunk?.reason).toBe('end');
+  });
+
   it('throws AdapterError on HTTP error response (stream)', async () => {
     const a = anthropicAdapter({
       apiKey: 'test',
