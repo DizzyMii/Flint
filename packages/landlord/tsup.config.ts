@@ -2,7 +2,7 @@ import { defineConfig } from 'tsup';
 
 // biome-ignore lint/style/noDefaultExport: tsup config requires default export
 export default defineConfig({
-  entry: ['src/index.ts', 'src/tools/index.ts'],
+  entry: ['src/index.ts', 'src/tools/index.ts', 'src/workflow/index.ts'],
   format: ['esm'],
   dts: true,
   clean: true,
