@@ -3,13 +3,13 @@ import { agent } from 'flint';
 import type { ProviderAdapter } from 'flint';
 import type { Budget } from 'flint/budget';
 import { standardTools } from '../tools/index.ts';
-import type { AgentCounter, Semaphore } from './concurrency.ts';
 import type { WorkflowBudget } from './budget.ts';
+import type { AgentCounter, Semaphore } from './concurrency.ts';
 import { WorkflowError } from './errors.ts';
 import type { EventEmitter } from './events.ts';
+import type { IsolationBackend } from './isolation.ts';
 import { hashCall } from './journal.ts';
 import type { JournalEntry, JournalStore } from './journal.ts';
-import type { IsolationBackend } from './isolation.ts';
 import type { AgentTypeRegistry, WorkflowRegistry } from './registry.ts';
 import { makeStructuredOutput } from './schema.ts';
 import type { AgentOpts, Models } from './types.ts';
@@ -93,9 +93,7 @@ export async function runAgentCall(
 
     if (opts?.schema !== undefined) {
       const so = makeStructuredOutput(opts.schema);
-      const systemPrompt =
-        `${preset.systemPrompt}\n\nYou MUST call the structured_output tool exactly once with your ` +
-        'final result as JSON matching the required schema. Do not finish until you have called it.';
+      const systemPrompt = `${preset.systemPrompt}\n\nYou MUST call the structured_output tool exactly once with your final result as JSON matching the required schema. Do not finish until you have called it.`;
       const out = await agent({
         adapter: deps.adapter,
         model,

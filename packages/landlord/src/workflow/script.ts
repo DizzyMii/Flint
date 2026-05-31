@@ -35,7 +35,14 @@ export function compileScript(source: string): WorkflowModule {
   const fn = new AsyncFunction(...hookNames, ...sandboxNames, body);
   const run = (wf: WorkflowContext): Promise<unknown> =>
     fn.apply(SANDBOX_THIS, [
-      wf.agent, wf.parallel, wf.pipeline, wf.phase, wf.log, wf.args, wf.budget, wf.workflow,
+      wf.agent,
+      wf.parallel,
+      wf.pipeline,
+      wf.phase,
+      wf.log,
+      wf.args,
+      wf.budget,
+      wf.workflow,
       ...sandboxValues,
     ]);
   return { meta, run };

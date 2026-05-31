@@ -1,5 +1,5 @@
 import { agent, tool } from 'flint';
-import type { ProviderAdapter, Result, Tool } from 'flint';
+import type { ProviderAdapter, Tool } from 'flint';
 import { budget as makeBudget } from 'flint/budget';
 import type { Budget } from 'flint/budget';
 import { z } from 'zod';

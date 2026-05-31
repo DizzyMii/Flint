@@ -1,7 +1,7 @@
 // test/workflow/concurrency.test.ts
 import { describe, expect, it } from 'vitest';
-import { AgentCapError } from '../../src/workflow/errors.ts';
 import { AgentCounter, Semaphore, defaultConcurrency } from '../../src/workflow/concurrency.ts';
+import { AgentCapError } from '../../src/workflow/errors.ts';
 
 describe('Semaphore', () => {
   it('never runs more than `limit` tasks concurrently', async () => {

@@ -13,7 +13,9 @@ describe('parseMeta', () => {
   });
 
   it('rejects a non-literal value (function call) in meta', () => {
-    expect(() => parseMeta(`export const meta = { name: foo(), description: 'x' }`)).toThrow(MetaError);
+    expect(() => parseMeta(`export const meta = { name: foo(), description: 'x' }`)).toThrow(
+      MetaError,
+    );
   });
 
   it('rejects meta missing name/description', () => {

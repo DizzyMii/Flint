@@ -31,7 +31,7 @@ export type StructuredOutput = {
  * message on mismatch so the agent loop retries.
  */
 export function makeStructuredOutput(schema: Record<string, unknown>): StructuredOutput {
-  const wrapped = schema['type'] !== 'object';
+  const wrapped = schema.type !== 'object';
   const jsonSchema: Record<string, unknown> = wrapped
     ? { type: 'object', properties: { result: schema }, required: ['result'] }
     : schema;

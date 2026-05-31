@@ -2,21 +2,22 @@ import { MetaError } from './errors.ts';
 import type { Meta } from './types.ts';
 
 function skipWs(s: string, i: number): number {
-  while (i < s.length) {
-    const c = s[i];
-    if (c === ' ' || c === '\n' || c === '\t' || c === '\r') i++;
+  let pos = i;
+  while (pos < s.length) {
+    const c = s[pos];
+    if (c === ' ' || c === '\n' || c === '\t' || c === '\r') pos++;
     else break;
   }
-  return i;
+  return pos;
 }
 
 function parseString(s: string, i: number): { value: string; end: number } {
   const quote = s[i];
-  i++;
+  let pos = i + 1;
   let out = '';
-  while (i < s.length && s[i] !== quote) {
-    if (s[i] === '\\') {
-      const n = s[i + 1];
+  while (pos < s.length && s[pos] !== quote) {
+    if (s[pos] === '\\') {
+      const n = s[pos + 1];
       out +=
         n === 'n'
           ? '\n'
@@ -29,14 +30,14 @@ function parseString(s: string, i: number): { value: string; end: number } {
                 : n === quote
                   ? quote
                   : (n ?? '');
-      i += 2;
+      pos += 2;
     } else {
-      out += s[i];
-      i++;
+      out += s[pos];
+      pos++;
     }
   }
-  if (s[i] !== quote) throw new MetaError('Unterminated string in meta literal');
-  return { value: out, end: i + 1 };
+  if (s[pos] !== quote) throw new MetaError('Unterminated string in meta literal');
+  return { value: out, end: pos + 1 };
 }
 
 function parseNumber(s: string, i: number): { value: number; end: number } {
@@ -112,7 +113,7 @@ export function parseMeta(source: string): Meta {
     throw new MetaError('meta must be an object literal');
   }
   const meta = value as Record<string, unknown>;
-  if (typeof meta['name'] !== 'string' || typeof meta['description'] !== 'string') {
+  if (typeof meta.name !== 'string' || typeof meta.description !== 'string') {
     throw new MetaError('meta requires string `name` and `description`');
   }
   return meta as unknown as Meta;

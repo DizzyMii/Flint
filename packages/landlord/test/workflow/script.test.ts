@@ -1,8 +1,8 @@
 // test/workflow/script.test.ts
 import { describe, expect, it } from 'vitest';
-import { compileScript } from '../../src/workflow/script.ts';
 import { defineWorkflow } from '../../src/workflow/define.ts';
 import { MetaError } from '../../src/workflow/errors.ts';
+import { compileScript } from '../../src/workflow/script.ts';
 import type { WorkflowContext } from '../../src/workflow/types.ts';
 
 function fakeCtx(calls: string[]): WorkflowContext {
@@ -34,7 +34,9 @@ describe('compileScript', () => {
   });
 
   it('blocks nondeterministic globals at runtime', async () => {
-    const mod = compileScript(`export const meta = { name: 'a', description: 'b' }\nreturn Date.now()`);
+    const mod = compileScript(
+      `export const meta = { name: 'a', description: 'b' }\nreturn Date.now()`,
+    );
     await expect(mod.run(fakeCtx([]))).rejects.toThrow();
   });
 
@@ -50,6 +52,8 @@ describe('defineWorkflow', () => {
   it('returns the module and validates meta', () => {
     const mod = defineWorkflow({ meta: { name: 'm', description: 'd' }, run: async () => 42 });
     expect(mod.meta.name).toBe('m');
-    expect(() => defineWorkflow({ meta: { name: 'm' } as never, run: async () => 1 })).toThrow(MetaError);
+    expect(() => defineWorkflow({ meta: { name: 'm' } as never, run: async () => 1 })).toThrow(
+      MetaError,
+    );
   });
 });

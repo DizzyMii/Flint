@@ -1,9 +1,9 @@
 // test/workflow/hooks.test.ts
 import { describe, expect, it } from 'vitest';
+import type { RunDeps } from '../../src/workflow/agentcall.ts';
 import { WorkflowBudget } from '../../src/workflow/budget.ts';
 import { EventEmitter } from '../../src/workflow/events.ts';
 import { buildContext } from '../../src/workflow/hooks.ts';
-import type { RunDeps } from '../../src/workflow/agentcall.ts';
 
 function fakeDeps(): RunDeps {
   return {

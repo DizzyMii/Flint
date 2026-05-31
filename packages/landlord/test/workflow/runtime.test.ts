@@ -2,9 +2,9 @@
 import type { NormalizedResponse } from 'flint';
 import { mockAdapter, scriptedAdapter } from 'flint/testing';
 import { describe, expect, it } from 'vitest';
+import { defineWorkflow } from '../../src/workflow/define.ts';
 import { memoryJournalStore } from '../../src/workflow/journal.ts';
 import { runWorkflow, runWorkflowScript } from '../../src/workflow/runtime.ts';
-import { defineWorkflow } from '../../src/workflow/define.ts';
 
 function textResponse(content: string): NormalizedResponse {
   return {

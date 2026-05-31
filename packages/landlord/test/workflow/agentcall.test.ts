@@ -1,19 +1,19 @@
-// test/workflow/agentcall.test.ts
-import type { NormalizedResponse } from 'flint';
-import { budget as makeBudget } from 'flint/budget';
 import { mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+// test/workflow/agentcall.test.ts
+import type { NormalizedResponse } from 'flint';
+import { budget as makeBudget } from 'flint/budget';
 import { mockAdapter, scriptedAdapter } from 'flint/testing';
 import { describe, expect, it } from 'vitest';
+import { runAgentCall } from '../../src/workflow/agentcall.ts';
+import type { RunDeps } from '../../src/workflow/agentcall.ts';
 import { WorkflowBudget } from '../../src/workflow/budget.ts';
 import { AgentCounter, Semaphore } from '../../src/workflow/concurrency.ts';
 import { EventEmitter } from '../../src/workflow/events.ts';
+import { workdirIsolation } from '../../src/workflow/isolation.ts';
 import { memoryJournalStore } from '../../src/workflow/journal.ts';
 import { createAgentRegistry } from '../../src/workflow/registry.ts';
-import { workdirIsolation } from '../../src/workflow/isolation.ts';
-import { runAgentCall } from '../../src/workflow/agentcall.ts';
-import type { RunDeps } from '../../src/workflow/agentcall.ts';
 
 function textResponse(content: string): NormalizedResponse {
   return {
