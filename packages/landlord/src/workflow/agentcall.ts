@@ -52,6 +52,7 @@ export async function runAgentCall(
   // Resume: replay a cached result when this call's signature is unchanged.
   const cached = deps.resumeEntries.find((e) => e.index === index);
   if (cached !== undefined && cached.hash === hash) {
+    await deps.journal.append(deps.runId, { index, hash, result: cached.result });
     return cached.result;
   }
 

@@ -7,7 +7,11 @@ import { runWorkflow, runWorkflowScript } from '../../src/workflow/runtime.ts';
 import { defineWorkflow } from '../../src/workflow/define.ts';
 
 function textResponse(content: string): NormalizedResponse {
-  return { message: { role: 'assistant', content }, usage: { input: 10, output: 5 }, stopReason: 'end' };
+  return {
+    message: { role: 'assistant', content },
+    usage: { input: 10, output: 5 },
+    stopReason: 'end',
+  };
 }
 
 describe('runWorkflow', () => {
@@ -35,7 +39,11 @@ describe('runWorkflow', () => {
     });
     expect(r1.ok && r1.value.result).toBe('hello');
 
-    const throwing = mockAdapter({ onCall: () => { throw new Error('must not be called'); } });
+    const throwing = mockAdapter({
+      onCall: () => {
+        throw new Error('must not be called');
+      },
+    });
     const r2 = await runWorkflowScript(source, {
       adapter: throwing,
       models: { default: 'm' },
@@ -44,6 +52,37 @@ describe('runWorkflow', () => {
       resumeFromRunId: 'run1',
     });
     expect(r2.ok && r2.value.result).toBe('hello');
+  });
+
+  it('supports two-hop resume by re-journaling replayed entries', async () => {
+    const journal = memoryJournalStore();
+    const source = `export const meta = { name: 'r', description: 'd' }\nreturn await agent('hi')`;
+    await runWorkflowScript(source, {
+      adapter: scriptedAdapter([textResponse('hello')]),
+      models: { default: 'm' },
+      journal,
+      runId: 'run1',
+    });
+    const throwing = mockAdapter({
+      onCall: () => {
+        throw new Error('must not be called');
+      },
+    });
+    await runWorkflowScript(source, {
+      adapter: throwing,
+      models: { default: 'm' },
+      journal,
+      runId: 'run2',
+      resumeFromRunId: 'run1',
+    });
+    const r3 = await runWorkflowScript(source, {
+      adapter: throwing,
+      models: { default: 'm' },
+      journal,
+      runId: 'run3',
+      resumeFromRunId: 'run2',
+    });
+    expect(r3.ok && r3.value.result).toBe('hello');
   });
 
   it('runs a typed workflow via runWorkflow', async () => {
