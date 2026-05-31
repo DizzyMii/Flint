@@ -2,6 +2,10 @@
 
 `orchestrate()` runs the complete landlord pipeline: decompose a goal into contracts, sort by dependency, run all tenants in parallel (where dependencies allow), collect artifacts, and return the result.
 
+::: info Built on the workflow runtime
+`orchestrate()` is now implemented as a built-in workflow on the [workflow runtime](/landlord/workflow). The public API, event names, and result shape are **unchanged** — existing code continues to work without modification. The rebuild means `orchestrate()` jobs now share the same concurrency cap, run ID, and `WorkflowEvent` infrastructure as script-driven workflows.
+:::
+
 ## Signature
 
 ```ts
