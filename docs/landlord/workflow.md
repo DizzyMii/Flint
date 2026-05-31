@@ -35,6 +35,7 @@ const adapter = anthropicAdapter({ apiKey: process.env.ANTHROPIC_API_KEY! });
 const source = `
 export const meta = { name: 'review', description: 'Review and verify findings' }
 
+const files = args
 phase('Find')
 const findings = await parallel(files.map(f => () => agent(
   'Review ' + f + ' for security issues',
@@ -67,7 +68,7 @@ if (result.ok) {
 }
 ```
 
-Note that `args` is passed to the script as a global `args` value; here the files array is available in the script as `files` only because the example uses `args` directly — update the script to use `const files = args` or pass it via the `args` field.
+The value passed as `args` is exposed to the script as the global `args`. Here the host passes the file list via `args: files`, and the script binds it locally with `const files = args` before using it.
 
 ### Typed workflow (`defineWorkflow`)
 

@@ -212,14 +212,16 @@ Runs another workflow inline, sharing the current run's concurrency cap, agent c
 // Named workflow from the registry (pass createWorkflowRegistry to RuntimeConfig.workflows)
 const subResult = await wf.workflow('analyze', { path: 'src/' });
 
-// Inline source string
-const subResult2 = await wf.workflow({
-  source: `
-    export const meta = { name: 'quick-check', description: 'Quick check' }
-    return await agent('Quick check: ' + args)
-  `,
-  args: 'src/index.ts',
-});
+// Inline source string — args is the SECOND argument, not a field of the ref object
+const subResult2 = await wf.workflow(
+  {
+    source: `
+      export const meta = { name: 'quick-check', description: 'Quick check' }
+      return await agent('Quick check: ' + args)
+    `,
+  },
+  'src/index.ts',
+);
 ```
 
 ---
