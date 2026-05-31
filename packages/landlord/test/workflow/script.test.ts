@@ -37,6 +37,13 @@ describe('compileScript', () => {
     const mod = compileScript(`export const meta = { name: 'a', description: 'b' }\nreturn Date.now()`);
     await expect(mod.run(fakeCtx([]))).rejects.toThrow();
   });
+
+  it('blocks sandbox escape via this', async () => {
+    const mod = compileScript(
+      `export const meta = { name: 'a', description: 'b' }\nreturn this.Date.now()`,
+    );
+    await expect(mod.run(fakeCtx([]))).rejects.toThrow();
+  });
 });
 
 describe('defineWorkflow', () => {
