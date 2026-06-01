@@ -63,4 +63,19 @@ describe('ContractSchema', () => {
     });
     expect(result.success).toBe(false);
   });
+
+  it('rejects non-positive, non-integer, and fractional maxRetries', () => {
+    const base = {
+      role: 'r',
+      objective: 'x',
+      subPrompt: 'x',
+      checkpoints: [],
+      outputSchema: {},
+    };
+    for (const maxRetries of [0, -1, 2.5]) {
+      const result = ContractSchema.safeParse({ ...base, maxRetries });
+      expect(result.success).toBe(false);
+    }
+    expect(ContractSchema.safeParse({ ...base, maxRetries: 1 }).success).toBe(true);
+  });
 });
