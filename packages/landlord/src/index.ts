@@ -11,3 +11,4 @@ export type {
   TenantOutcome,
 } from './orchestrate.ts';
 export type { ValidationVerdict } from './validate.ts';
+export * from './workflow/index.ts';

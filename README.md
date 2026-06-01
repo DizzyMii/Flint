@@ -168,6 +168,7 @@ if (out.ok) console.log(out.value.message.content); // "579"
 | `@flint/adapter-anthropic` | Anthropic Messages API — prompt-cache aware |
 | `@flint/adapter-openai-compat` | Any OpenAI-compatible endpoint |
 | `@flint/graph` | State-machine agent workflows |
+| `@flint/landlord` | Multi-agent orchestration: dynamic workflow runtime (ultracode-style script orchestration) and auto-decompose `orchestrate()` |
 
 ## Flint vs LangChain
 
@@ -303,7 +304,7 @@ Full documentation at **[dizzymii.github.io/Flint](https://dizzymii.github.io/Fl
 - [Features](https://dizzymii.github.io/Flint/features/budget) — budget, compress, memory, RAG, recipes, safety, graph
 - [Adapters](https://dizzymii.github.io/Flint/adapters/anthropic) — Anthropic, OpenAI-compatible, custom
 - [Examples](https://dizzymii.github.io/Flint/examples/basic-call) — basic call, tools, agent, streaming, RAG, multi-agent, memory, graph
-- [Landlord](https://dizzymii.github.io/Flint/landlord/) — `@flint/landlord` multi-agent orchestration
+- [Landlord](https://dizzymii.github.io/Flint/landlord/) — `@flint/landlord` dynamic workflow runtime and multi-agent orchestration
 - [Reference](https://dizzymii.github.io/Flint/reference/errors) — error types catalog
 
 ## Contributing

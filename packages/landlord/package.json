@@ -9,7 +9,8 @@
   "files": ["dist", "README.md", "LICENSE"],
   "exports": {
     ".": { "types": "./dist/index.d.ts", "import": "./dist/index.js" },
-    "./tools": { "types": "./dist/tools/index.d.ts", "import": "./dist/tools/index.js" }
+    "./tools": { "types": "./dist/tools/index.d.ts", "import": "./dist/tools/index.js" },
+    "./workflow": { "types": "./dist/workflow/index.d.ts", "import": "./dist/workflow/index.js" }
   },
   "scripts": {
     "build": "tsup",

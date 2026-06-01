@@ -73,6 +73,49 @@ if (result.ok) {
 | **Eviction** | When a tenant fails a checkpoint or runs out of budget — triggers retry |
 | **Escalation** | When a tenant exhausts all retries — its dependents are cancelled |
 
+## Two ways to orchestrate
+
+### Script-driven workflow runtime (new)
+
+Write TypeScript that drives subagents directly using hooks (`agent`, `parallel`, `pipeline`, `phase`, `log`, `args`, `budget`, `workflow`). You control the control flow — loops, conditionals, fan-out are all plain code.
+
+```ts
+import { defineWorkflow, runWorkflow } from '@flint/landlord';
+
+const workflow = defineWorkflow({
+  meta: { name: 'review', description: 'Review and verify findings' },
+  run: async (wf) => {
+    wf.phase('Scan');
+    const findings = await wf.parallel(
+      (wf.args as string[]).map((f) => () =>
+        wf.agent(`Scan ${f} for issues`, { agentType: 'code-reviewer', schema: FINDINGS_SCHEMA }),
+      ),
+    );
+    return findings.filter(Boolean);
+  },
+});
+
+const result = await runWorkflow(workflow, { adapter, models: { default: 'claude-opus-4-7' } });
+```
+
+The model can also write the workflow as a string script via `runWorkflowScript` or the `workflowTool`. See [Workflow Runtime](/landlord/workflow) for the full API.
+
+### Auto-decompose (`orchestrate()`)
+
+Describe the goal in a prompt; the orchestrator asks an LLM to decompose it into a `Contract[]` (a DAG of worker specs) and then runs all tenants in parallel where dependencies allow. Useful when the decomposition strategy itself should be model-driven.
+
+```ts
+import { orchestrate } from '@flint/landlord';
+
+const result = await orchestrate(
+  'Build a REST API for a todo app with CRUD endpoints and SQLite storage',
+  (workDir) => standardTools(workDir),
+  { adapter, landlordModel: 'claude-opus-4-7', tenantModel: 'claude-opus-4-7' }
+);
+```
+
+`orchestrate()` is now built on the workflow runtime internally — it shares the same concurrency cap, journaling, and event system. Its public API and behavior are unchanged.
+
 ## When to use landlord vs agent()
 
 Use `agent()` when a single model can accomplish the goal in one continuous loop. Use landlord when:
@@ -84,6 +127,8 @@ Use `agent()` when a single model can accomplish the goal in one continuous loop
 
 ## See also
 
+- [Workflow Runtime](/landlord/workflow) — script-driven multi-agent orchestration
+- [Hooks reference](/landlord/hooks) — `agent`, `parallel`, `pipeline`, `phase`, `log`, `args`, `budget`, `workflow`
 - [Contracts](/landlord/contract) — Contract and Checkpoint schemas
 - [decompose()](/landlord/decompose) — how goals become contract lists
 - [orchestrate()](/landlord/orchestrate) — full orchestration API
