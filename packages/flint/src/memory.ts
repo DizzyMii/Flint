@@ -58,7 +58,7 @@ export type ConversationMemoryOpts = {
 };
 
 export type ConversationMemory = {
-  append(m: Message): void;
+  append(m: Message): Promise<void>;
   messages(): Message[];
   summary(): string | undefined;
   clear(): void;

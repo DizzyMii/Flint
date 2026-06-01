@@ -29,7 +29,16 @@ export function approxCount(messages: Message[]): number {
     if (msg.role === 'assistant' && msg.toolCalls) {
       for (const tc of msg.toolCalls) {
         total += ROLE_OVERHEAD;
-        total += textTokens(JSON.stringify(tc.arguments));
+        // tc.arguments is `unknown` — JSON.stringify can throw (circular refs,
+        // BigInt) or return undefined (a bare undefined value). Either case must
+        // not crash a pure token estimate, so fall back to 0 for the arguments.
+        let serialized: string | undefined;
+        try {
+          serialized = JSON.stringify(tc.arguments);
+        } catch {
+          serialized = undefined;
+        }
+        total += serialized === undefined ? 0 : textTokens(serialized);
       }
     }
   }

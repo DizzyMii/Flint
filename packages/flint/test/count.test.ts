@@ -55,6 +55,25 @@ describe('approxCount', () => {
     const more: Message[] = [...base, { role: 'assistant', content: 'hi back' }];
     expect(approxCount(more)).toBeGreaterThanOrEqual(approxCount(base));
   });
+
+  it('does not throw on non-serializable tool arguments', () => {
+    const circular: Record<string, unknown> = {};
+    circular.self = circular;
+    const msgs: Message[] = [
+      {
+        role: 'assistant',
+        content: '',
+        toolCalls: [
+          { id: 'c1', name: 'circular', arguments: circular },
+          { id: 'c2', name: 'bigint', arguments: { n: 1n } },
+          { id: 'c3', name: 'undef', arguments: undefined },
+        ],
+      },
+    ];
+    // role 4 + 3 tool-call overheads (4 each); unserializable args contribute 0.
+    expect(() => approxCount(msgs)).not.toThrow();
+    expect(approxCount(msgs)).toBe(4 + 4 * 3);
+  });
 });
 
 describe('count', () => {

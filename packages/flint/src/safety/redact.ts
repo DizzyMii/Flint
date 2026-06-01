@@ -39,7 +39,7 @@ export const secretPatterns: RegExp[] = [
   /gho_[a-zA-Z0-9]{36}/g,
   /xox[baprs]-[a-zA-Z0-9-]{10,}/g,
   /sk_(?:live|test)_[a-zA-Z0-9]{24,}/g,
-  /-----BEGIN [A-Z ]+ PRIVATE KEY-----[\s\S]+?-----END [A-Z ]+ PRIVATE KEY-----/g,
+  /-----BEGIN (?:[A-Z0-9 -]+ )?PRIVATE KEY-----[\s\S]+?-----END (?:[A-Z0-9 -]+ )?PRIVATE KEY-----/g,
   /\b\d{3}-\d{2}-\d{4}\b/g,
   /\b(?:\d{4}[\s-]?){3}\d{4}\b/g,
 ];

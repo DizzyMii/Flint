@@ -91,6 +91,18 @@ describe('secretPatterns preset', () => {
     ['Stripe live key', 'sk_live_abcdefghijklmnopqrstuvwx'],
     ['SSN', 'SSN: 123-45-6789'],
     ['Credit card', 'card 4111-1111-1111-1111'],
+    [
+      'RSA private key',
+      '-----BEGIN RSA PRIVATE KEY-----\nMIIBOgIBAAJBAKj\n-----END RSA PRIVATE KEY-----',
+    ],
+    [
+      'generic PKCS#8 private key',
+      '-----BEGIN PRIVATE KEY-----\nMIGHAgEAMBMGBy\n-----END PRIVATE KEY-----',
+    ],
+    [
+      'encrypted private key',
+      '-----BEGIN ENCRYPTED PRIVATE KEY-----\nMIIFLTBXBgkq\n-----END ENCRYPTED PRIVATE KEY-----',
+    ],
   ];
 
   for (const [label, text] of cases) {
