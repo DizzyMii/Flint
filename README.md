@@ -20,7 +20,7 @@
 
 ---
 
-Six primitives. One agent loop. No magic. **Flint** gives you well-typed building blocks for AI agents in TypeScript — and stays out of the way. JavaScript is the runtime; Flint gives you the tools.
+Six primitives. One agent loop. No magic. **Flint** gives you well-typed building blocks for AI agents in TypeScript and stays out of the way — plain async functions over the provider API, one runtime dependency, errors returned as values instead of thrown.
 
 ## Install
 
@@ -28,74 +28,7 @@ Six primitives. One agent loop. No magic. **Flint** gives you well-typed buildin
 npm install flint @flint/adapter-anthropic
 ```
 
-## Setup
-
-### API key
-
-Flint's Anthropic adapter reads your API key from the environment:
-
-```sh
-export ANTHROPIC_API_KEY=sk-ant-...
-```
-
-Or use a `.env` file with `dotenv`:
-
-```sh
-npm install dotenv
-```
-
-```ts
-import 'dotenv/config';
-import { anthropicAdapter } from '@flint/adapter-anthropic';
-
-const adapter = anthropicAdapter({ apiKey: process.env.ANTHROPIC_API_KEY! });
-```
-
-### TypeScript config
-
-Flint requires `moduleResolution: "bundler"` (or `"node16"` / `"nodenext"`) and `strict: true`. Minimum `tsconfig.json`:
-
-```json
-{
-  "compilerOptions": {
-    "target": "ES2022",
-    "module": "ESNext",
-    "moduleResolution": "bundler",
-    "strict": true,
-    "outDir": "dist"
-  }
-}
-```
-
-### ESM
-
-Flint is ESM-only. Add `"type": "module"` to your `package.json`:
-
-```json
-{
-  "type": "module"
-}
-```
-
-If you're using a bundler (Vite, esbuild, tsup) this is handled automatically.
-
-### Verify your setup
-
-Run this snippet to confirm everything is wired up:
-
-```ts
-import { call } from 'flint';
-import { anthropicAdapter } from '@flint/adapter-anthropic';
-
-const adapter = anthropicAdapter({ apiKey: process.env.ANTHROPIC_API_KEY! });
-const res = await call({
-  adapter,
-  model: 'claude-haiku-4-5-20251001',
-  messages: [{ role: 'user', content: 'Reply with the single word: ready' }],
-});
-console.log(res.ok ? res.value.message.content : res.error.message);
-// → "ready"
-```
+ESM only, Node 20+, `strict: true`. The Anthropic adapter reads `ANTHROPIC_API_KEY` from the environment. See the [setup guide](https://dizzymii.github.io/Flint/guide/) for tsconfig and `.env` details.
 
 ## Quick start
 
@@ -107,7 +40,7 @@ import * as v from 'valibot'; // any Standard Schema library works
 
 const adapter = anthropicAdapter({ apiKey: process.env.ANTHROPIC_API_KEY! });
 
-// One-shot call
+// One-shot call — errors come back as values, nothing throws
 const res = await call({
   adapter,
   model: 'claude-opus-4-7',
@@ -115,7 +48,7 @@ const res = await call({
 });
 if (res.ok) console.log(res.value.message.content); // "Paris"
 
-// Define a tool
+// A tool
 const add = tool({
   name: 'add',
   description: 'Add two numbers',
@@ -123,7 +56,7 @@ const add = tool({
   handler: ({ a, b }) => a + b,
 });
 
-// Agent loop with budget enforcement
+// Agent loop with enforced step / token / dollar caps
 const out = await agent({
   adapter,
   model: 'claude-opus-4-7',
@@ -136,29 +69,14 @@ if (out.ok) console.log(out.value.message.content); // "579"
 
 ## What you get
 
-### Core (`flint`)
+**Core (`flint`)** — 1 runtime dependency (`@standard-schema/spec`)
 
-- 1 runtime dependency (`@standard-schema/spec`)
 - 6 primitives: `call`, `stream`, `validate`, `tool`, `execute`, `count`
 - `agent()` loop with step / token / dollar budget caps
-- 6 compress transforms + `pipeline()` combinator: `dedup`, `windowLast`, `windowFirst`, `truncateToolResults`, `summarize`, `orderForCache`
-- 4 recipes: `react` (ReAct pattern), `retryValidate`, `reflect`, `summarize`
-- RAG: chunk, store, retrieve
-- Conversation memory with async summarization
-- Safety: injection detection, redaction, permissions, approval gates, boundary wrapping
-
-### Adapters (zero runtime dependencies each)
-
-- `@flint/adapter-anthropic` — prompt-cache aware, pure `fetch` + `ReadableStream`
-- `@flint/adapter-openai-compat` — any OpenAI-compatible endpoint (OpenAI, Groq, Ollama, DeepSeek, Together)
-
-### Graph
-
-- `@flint/graph` — state-machine workflows with memory checkpointing
-
-### Platform
-
-- Node 20+ · Web API primitives only (`fetch`, `ReadableStream`, `TextDecoder`)
+- compress transforms + `pipeline()`: `dedup`, `windowLast`, `windowFirst`, `truncateToolResults`, `summarize`, `orderForCache`
+- recipes: `react`, `retryValidate`, `reflect`, `summarize`
+- RAG (chunk, store, retrieve), conversation memory with async summarization
+- safety: injection detection, redaction, permissions, approval gates, boundary wrapping
 
 ## Packages
 
@@ -166,121 +84,11 @@ if (out.ok) console.log(out.value.message.content); // "579"
 |---|---|
 | `flint` | Core primitives, agent loop, compress, memory, RAG, safety, recipes |
 | `@flint/adapter-anthropic` | Anthropic Messages API — prompt-cache aware |
-| `@flint/adapter-openai-compat` | Any OpenAI-compatible endpoint |
-| `@flint/graph` | State-machine agent workflows |
-| `@flint/landlord` | Multi-agent orchestration: dynamic workflow runtime (ultracode-style script orchestration) and auto-decompose `orchestrate()` |
+| `@flint/adapter-openai-compat` | Any OpenAI-compatible endpoint (OpenAI, Groq, Ollama, DeepSeek, Together) |
+| `@flint/graph` | State-machine agent workflows with memory checkpointing |
+| `@flint/landlord` | Multi-agent orchestration — dynamic workflow runtime and auto-decompose `orchestrate()` |
 
-## Flint vs LangChain
-
-> For a full narrative comparison covering philosophy, dependencies, error handling, streaming, budget enforcement, safety, and prompt caching, see the **[Flint vs LangChain](https://dizzymii.github.io/Flint/guide/vs-langchain)** guide.
-
-LangChain models everything as a class hierarchy — LLMs, chains, tools, and agents are objects you instantiate and compose. You learn LangChain's abstractions, then use them to talk to models. Flint is plain async functions: `call`, `tool`, `agent`. You learn the provider API once; Flint adds thin, well-typed helpers on top. LangChain's modular package system means installing 3+ packages with dozens of transitive dependencies per provider; Flint has one runtime dependency (`@standard-schema/spec`). Where LangChain's executor surfaces errors as thrown exceptions, Flint returns `Result<T>` — no try/catch at call sites.
-
-### Install
-
-**LangChain**
-```sh
-npm install langchain @langchain/anthropic @langchain/core
-```
-
-**Flint**
-```sh
-npm install flint @flint/adapter-anthropic
-```
-
-### Basic LLM call
-
-**LangChain**
-```ts
-import { ChatAnthropic } from '@langchain/anthropic';
-import { HumanMessage } from '@langchain/core/messages';
-
-const llm = new ChatAnthropic({
-  model: 'claude-opus-4-7',
-  apiKey: process.env.ANTHROPIC_API_KEY,
-});
-const res = await llm.invoke([new HumanMessage('What is the capital of France?')]);
-console.log(res.content); // "Paris"
-```
-
-**Flint**
-```ts
-import { call } from 'flint';
-import { anthropicAdapter } from '@flint/adapter-anthropic';
-
-const adapter = anthropicAdapter({ apiKey: process.env.ANTHROPIC_API_KEY! });
-const res = await call({
-  adapter,
-  model: 'claude-opus-4-7',
-  messages: [{ role: 'user', content: 'What is the capital of France?' }],
-});
-if (res.ok) console.log(res.value.message.content); // "Paris"
-```
-
-### Tool definition
-
-**LangChain**
-```ts
-import { tool } from '@langchain/core/tools';
-import { z } from 'zod';
-
-const add = tool(({ a, b }) => String(a + b), {
-  name: 'add',
-  description: 'Add two numbers',
-  schema: z.object({ a: z.number(), b: z.number() }),
-});
-```
-
-**Flint**
-```ts
-import { tool } from 'flint';
-import * as v from 'valibot'; // any Standard Schema library works
-
-const add = tool({
-  name: 'add',
-  description: 'Add two numbers',
-  input: v.object({ a: v.number(), b: v.number() }),
-  handler: ({ a, b }) => a + b,
-});
-```
-
-### Agent loop
-
-**LangChain**
-```ts
-import { ChatAnthropic } from '@langchain/anthropic';
-import { AgentExecutor, createToolCallingAgent } from 'langchain/agents';
-import { ChatPromptTemplate } from '@langchain/core/prompts';
-// add tool defined in previous snippet
-
-const llm = new ChatAnthropic({ model: 'claude-opus-4-7', apiKey: process.env.ANTHROPIC_API_KEY });
-const prompt = ChatPromptTemplate.fromMessages([
-  ['system', 'You are a helpful assistant.'],
-  ['placeholder', '{chat_history}'],
-  ['human', '{input}'],
-  ['placeholder', '{agent_scratchpad}'],
-]);
-const agent = createToolCallingAgent({ llm, tools: [add], prompt });
-const executor = new AgentExecutor({ agent, tools: [add] });
-const result = await executor.invoke({ input: 'What is 123 + 456?' });
-console.log(result.output); // "579"
-```
-
-**Flint**
-```ts
-import { agent } from 'flint';
-import { budget } from 'flint/budget';
-// adapter and add defined above
-
-const out = await agent({
-  adapter,
-  model: 'claude-opus-4-7',
-  messages: [{ role: 'user', content: 'What is 123 + 456?' }],
-  tools: [add],
-  budget: budget({ maxSteps: 5, maxDollars: 0.10 }),
-});
-if (out.ok) console.log(out.value.message.content); // "579"
-```
+Adapters and graph each ship with zero runtime dependencies, on Web API primitives only (`fetch`, `ReadableStream`, `TextDecoder`).
 
 ## Why Flint
 
@@ -289,23 +97,14 @@ if (out.ok) console.log(out.value.message.content); // "579"
 - **Standard Schema** — bring Zod, Valibot, ArkType, or any compatible library.
 - **Budget-aware** — every agent loop enforces step, token, and dollar limits.
 - **Streaming first** — `AsyncIterable<StreamChunk>` throughout.
-- **Safety in core** — injection detection, redaction, and approval gates are not an afterthought.
+- **Safety in core** — injection detection, redaction, and approval gates, not an afterthought.
 - **Results, not exceptions** — `Promise<Result<T>>` everywhere; no try/catch at the call site.
+
+Coming from LangChain? See the [Flint vs LangChain](https://dizzymii.github.io/Flint/guide/vs-langchain) guide for a full side-by-side.
 
 ## Documentation
 
-Full documentation at **[dizzymii.github.io/Flint](https://dizzymii.github.io/Flint)**:
-
-- [Guide](https://dizzymii.github.io/Flint/guide/) — installation, quick start, v0 status
-- [Flint vs LangChain](https://dizzymii.github.io/Flint/guide/vs-langchain) — full narrative comparison
-- [Testing](https://dizzymii.github.io/Flint/guide/testing) — mockAdapter, scriptedAdapter, testing patterns
-- [FAQ](https://dizzymii.github.io/Flint/guide/faq) — RAG, vector search, design decisions, common questions
-- [Primitives](https://dizzymii.github.io/Flint/primitives/call) — `call`, `stream`, `validate`, `tool`, `execute`, `count`, `agent`
-- [Features](https://dizzymii.github.io/Flint/features/budget) — budget, compress, memory, RAG, recipes, safety, graph
-- [Adapters](https://dizzymii.github.io/Flint/adapters/anthropic) — Anthropic, OpenAI-compatible, custom
-- [Examples](https://dizzymii.github.io/Flint/examples/basic-call) — basic call, tools, agent, streaming, RAG, multi-agent, memory, graph
-- [Landlord](https://dizzymii.github.io/Flint/landlord/) — `@flint/landlord` dynamic workflow runtime and multi-agent orchestration
-- [Reference](https://dizzymii.github.io/Flint/reference/errors) — error types catalog
+Full docs at **[dizzymii.github.io/Flint](https://dizzymii.github.io/Flint)** — [primitives](https://dizzymii.github.io/Flint/primitives/call), [features](https://dizzymii.github.io/Flint/features/budget), [adapters](https://dizzymii.github.io/Flint/adapters/anthropic), [examples](https://dizzymii.github.io/Flint/examples/basic-call), [landlord](https://dizzymii.github.io/Flint/landlord/), [testing](https://dizzymii.github.io/Flint/guide/testing), and [FAQ](https://dizzymii.github.io/Flint/guide/faq).
 
 ## Contributing
 
