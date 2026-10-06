@@ -1,6 +1,4 @@
-<p align="center">
-  <img src="flint.png" width="100%" alt="Flint" />
-</p>
+<img src=".github/banner.svg" width="100%" alt="Flint" />
 
 <p align="center">Token-efficient agentic TypeScript runtime</p>
 
