@@ -1,25 +1,55 @@
 {
   "name": "flint",
-  "version": "0.0.0",
+  "version": "0.0.1",
   "description": "Token-efficient agentic TypeScript runtime — core primitives",
   "type": "module",
   "license": "MIT",
   "sideEffects": false,
-  "engines": { "node": ">=20" },
-  "files": ["dist", "README.md", "LICENSE"],
+  "engines": {
+    "node": ">=20"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
   "exports": {
-    ".": { "types": "./dist/index.d.ts", "import": "./dist/index.js" },
-    "./memory": { "types": "./dist/memory.d.ts", "import": "./dist/memory.js" },
-    "./rag": { "types": "./dist/rag.d.ts", "import": "./dist/rag.js" },
-    "./compress": { "types": "./dist/compress.d.ts", "import": "./dist/compress.js" },
-    "./recipes": { "types": "./dist/recipes.d.ts", "import": "./dist/recipes.js" },
-    "./budget": { "types": "./dist/budget.d.ts", "import": "./dist/budget.js" },
-    "./errors": { "types": "./dist/errors.d.ts", "import": "./dist/errors.js" },
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./memory": {
+      "types": "./dist/memory.d.ts",
+      "import": "./dist/memory.js"
+    },
+    "./rag": {
+      "types": "./dist/rag.d.ts",
+      "import": "./dist/rag.js"
+    },
+    "./compress": {
+      "types": "./dist/compress.d.ts",
+      "import": "./dist/compress.js"
+    },
+    "./recipes": {
+      "types": "./dist/recipes.d.ts",
+      "import": "./dist/recipes.js"
+    },
+    "./budget": {
+      "types": "./dist/budget.d.ts",
+      "import": "./dist/budget.js"
+    },
+    "./errors": {
+      "types": "./dist/errors.d.ts",
+      "import": "./dist/errors.js"
+    },
     "./testing": {
       "types": "./dist/testing/mock-adapter.d.ts",
       "import": "./dist/testing/mock-adapter.js"
     },
-    "./safety": { "types": "./dist/safety/index.d.ts", "import": "./dist/safety/index.js" }
+    "./safety": {
+      "types": "./dist/safety/index.d.ts",
+      "import": "./dist/safety/index.js"
+    }
   },
   "scripts": {
     "build": "tsup",

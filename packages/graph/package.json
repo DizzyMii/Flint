@@ -1,17 +1,26 @@
 {
   "name": "@flint/graph",
-  "version": "0.0.0",
+  "version": "0.0.1",
   "description": "State-machine agent flows for Flint",
   "type": "module",
   "license": "MIT",
   "sideEffects": false,
-  "engines": { "node": ">=20" },
-  "files": ["dist", "README.md", "LICENSE"],
+  "engines": {
+    "node": ">=20"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
   "publishConfig": {
     "access": "public"
   },
   "exports": {
-    ".": { "types": "./dist/index.d.ts", "import": "./dist/index.js" }
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
   },
   "scripts": {
     "build": "tsup",

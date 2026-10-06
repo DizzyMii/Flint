@@ -1,16 +1,31 @@
 {
   "name": "landlord",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "description": "Agentic orchestrator built on Flint primitives",
   "type": "module",
   "license": "MIT",
   "sideEffects": false,
-  "engines": { "node": ">=20" },
-  "files": ["dist", "README.md", "LICENSE"],
+  "engines": {
+    "node": ">=20"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
   "exports": {
-    ".": { "types": "./dist/index.d.ts", "import": "./dist/index.js" },
-    "./tools": { "types": "./dist/tools/index.d.ts", "import": "./dist/tools/index.js" },
-    "./workflow": { "types": "./dist/workflow/index.d.ts", "import": "./dist/workflow/index.js" }
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./tools": {
+      "types": "./dist/tools/index.d.ts",
+      "import": "./dist/tools/index.js"
+    },
+    "./workflow": {
+      "types": "./dist/workflow/index.d.ts",
+      "import": "./dist/workflow/index.js"
+    }
   },
   "scripts": {
     "build": "tsup",
