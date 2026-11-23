@@ -183,9 +183,25 @@ export async function prepareCall<T>(options: CallOptions<T>): Promise<Result<Pr
           ),
         );
       }
-      req.maxTokens = Math.floor(limit);
+      // Only rewrite max_tokens when there is a real cap to lower. Without one (the adapter sends
+      // none), inventing a huge value breaks providers that validate it against the model limit.
+      if (requested !== undefined) req.maxTokens = Math.floor(limit);
     }
-    const outCap = req.maxTokens ?? requested ?? 0;
+    const thinkingBudget = (req.extra?.thinking as { budget_tokens?: unknown } | undefined)
+      ?.budget_tokens;
+    if (
+      typeof thinkingBudget === 'number' &&
+      req.maxTokens !== undefined &&
+      req.maxTokens <= thinkingBudget
+    ) {
+      return fail(
+        new BudgetExhausted(
+          `Budget insufficient for next call: max_tokens ${req.maxTokens} does not exceed the thinking budget ${thinkingBudget}`,
+          { code: `budget.${limitedBy ?? 'tokens'}`, cause: { remaining } },
+        ),
+      );
+    }
+    const outCap = req.maxTokens ?? requested ?? Math.min(limit, 4096);
     hold = budget.reserve?.({
       tokens: prompt + outCap,
       ...(pricing ? { dollars: worstCaseCost(prompt, outCap, pricing) } : {}),
@@ -242,6 +258,18 @@ function nextRetry<T>(
   return retryDelay(e, attempt, policy);
 }
 
+const overBudget = new WeakMap<Error, NormalizedResponse & { cost?: number }>();
+
+/**
+ * The response that pushed a budget over its limit. The provider billed it, so callers that keep
+ * accounts or transcripts (the agent loop does) should record it even though the call failed.
+ */
+export function overBudgetResponse(
+  error: Error,
+): (NormalizedResponse & { cost?: number }) | undefined {
+  return overBudget.get(error);
+}
+
 function settle<T>(
   options: CallOptions<T>,
   prepared: Prepared,
@@ -261,7 +289,10 @@ function settle<T>(
       ...(options.budgetSteps !== undefined ? { steps: options.budgetSteps } : {}),
     });
   } catch (e) {
-    if (e instanceof Error && e.name === 'BudgetExhausted') return fail(e);
+    if (e instanceof Error && e.name === 'BudgetExhausted') {
+      overBudget.set(e, { ...resp, ...(cost !== undefined ? { cost } : {}) });
+      return fail(e);
+    }
     throw e;
   }
   if (budget.limits.maxDollars !== undefined && cost === undefined) {
@@ -338,30 +369,35 @@ export async function call<T = unknown>(options: CallOptions<T>): Promise<Result
   if (!prepared.ok) return prepared;
 
   let resp: NormalizedResponse;
-  for (let attempt = 0; ; attempt++) {
-    try {
-      resp = await options.adapter.call(prepared.value.req);
-      break;
-    } catch (e) {
-      const err = toAdapterError(e);
-      const delay = nextRetry(err, attempt, options);
-      if (delay === undefined) {
-        prepared.value.hold?.release();
-        return fail(err);
-      }
-      options.logger?.warn?.('call: retrying after transient adapter error', {
-        attempt: attempt + 1,
-        delayMs: delay,
-        kind: err.kind,
-      });
-      options.onRetry?.({ attempt: attempt + 1, error: err, delayMs: delay });
+  try {
+    for (let attempt = 0; ; attempt++) {
       try {
-        await sleep(delay, options.signal);
-      } catch {
-        prepared.value.hold?.release();
-        return fail(err);
+        resp = await options.adapter.call(prepared.value.req);
+        break;
+      } catch (e) {
+        const err = toAdapterError(e);
+        const delay = nextRetry(err, attempt, options);
+        if (delay === undefined) {
+          prepared.value.hold?.release();
+          return fail(err);
+        }
+        options.logger?.warn?.('call: retrying after transient adapter error', {
+          attempt: attempt + 1,
+          delayMs: delay,
+          kind: err.kind,
+        });
+        options.onRetry?.({ attempt: attempt + 1, error: err, delayMs: delay });
+        try {
+          await sleep(delay, options.signal);
+        } catch {
+          prepared.value.hold?.release();
+          return fail(err);
+        }
       }
     }
+  } finally {
+    // Covers a throwing onRetry/logger as well as the normal exits; release() is idempotent.
+    prepared.value.hold?.release();
   }
 
   return finish(options, prepared.value, resp);

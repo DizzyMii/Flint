@@ -470,7 +470,8 @@ describe('context manager', () => {
     const first = await cm.prepare(transcript, { model: 'm', step: 4 });
     expect(first.compaction?.reason).toBe('pressure');
     expect(checkTranscript(first.messages)).toEqual([]);
-    expect(first.messages[1]).toMatchObject({ role: 'system' });
+    expect(first.messages[1]).toMatchObject({ role: 'user' });
+    expect(first.messages[2]?.role).toBe('assistant');
 
     transcript.push(text('next').message);
     const second = await cm.prepare(transcript, { model: 'm', step: 5 });
@@ -490,7 +491,12 @@ describe('context manager', () => {
             kind: 'context_overflow',
           });
         }
-        if (req.messages.some((m) => m.role === 'system' && m.content.startsWith('Summary'))) {
+        if (
+          req.messages.some(
+            (m) =>
+              m.role === 'user' && typeof m.content === 'string' && m.content.startsWith('Summary'),
+          )
+        ) {
           return text('done after compaction');
         }
         return n === 1 ? calls('a') : text('SUMMARY');
@@ -523,7 +529,7 @@ describe('context manager', () => {
       step: 0,
     });
     expect(messages).toEqual([
-      { role: 'system', content: 'Summary of earlier work in this session:\nS' },
+      { role: 'user', content: 'Summary of earlier work in this session:\nS' },
       user('c'),
     ]);
   });
@@ -571,5 +577,90 @@ describe('callStream', () => {
       break;
     }
     expect(b.remaining().tokens).toBe(before);
+  });
+});
+
+describe('review regressions', () => {
+  it('does not invent max_tokens when the adapter has no default', async () => {
+    const adapter = scriptedAdapter([text('x')]);
+    await call({
+      adapter,
+      model: 'm',
+      messages: [user('hi')],
+      budget: budget({ maxTokens: 1_000_000 }),
+    });
+    expect(adapter.calls[0]?.maxTokens).toBeUndefined();
+  });
+
+  it('records a response that pushed the budget over its limit', async () => {
+    const adapter = mockAdapter({
+      onCall: () => ({ ...text('final answer'), usage: { input: 500, output: 100 } }),
+      capabilities: { defaultMaxTokens: 100 },
+    });
+    const events: AgentEvent[] = [];
+    const out = await agent({
+      adapter,
+      model: 'm',
+      messages: [user('x')],
+      budget: budget({ maxTokens: 300 }),
+      onEvent: (e) => events.push(e),
+    });
+    expect(out.ok).toBe(false);
+    if (out.ok) return;
+    const partial = partialRun(out.error);
+    expect(partial?.usage).toEqual({ input: 500, output: 100 });
+    expect(partial?.messages.at(-1)).toMatchObject({ content: 'final answer' });
+    expect(events.some((e) => e.type === 'response')).toBe(true);
+  });
+
+  it('refuses when the clamp would leave no room beyond the thinking budget', async () => {
+    const adapter = scriptedAdapter([text('x')], { capabilities: { defaultMaxTokens: 16000 } });
+    const res = await call({
+      adapter,
+      model: 'm',
+      messages: [user('hi')],
+      extra: { thinking: { type: 'enabled', budget_tokens: 10_000 } },
+      budget: budget({ maxTokens: 8000 }),
+    });
+    expect(res.ok).toBe(false);
+    expect(adapter.calls).toHaveLength(0);
+  });
+
+  it('releases the reservation when onRetry throws', async () => {
+    const b = budget({ maxTokens: 100_000 });
+    const before = b.remaining().tokens;
+    const adapter = mockAdapter({
+      onCall: () => {
+        throw new AdapterError('x', {
+          code: 'adapter.http.529',
+          kind: 'overloaded',
+          retryable: true,
+        });
+      },
+    });
+    await expect(
+      call({
+        adapter,
+        model: 'm',
+        messages: [user('x')],
+        budget: b,
+        onRetry: () => {
+          throw new Error('sink');
+        },
+      }),
+    ).rejects.toThrow('sink');
+    expect(b.remaining().tokens).toBe(before);
+  });
+
+  it('resuming into the same event log does not duplicate the transcript', async () => {
+    const log = eventLog();
+    const opts = { model: 'm', tools: [echo], budget: budget({ maxSteps: 9 }), onEvent: log.sink };
+    await agent({ adapter: scriptedAdapter([text('a')]), messages: [user('1')], ...opts });
+    const resumed = await agent({
+      adapter: scriptedAdapter([text('b')]),
+      messages: [...log.transcript(), user('2')],
+      ...opts,
+    });
+    expect(log.transcript()).toEqual(resumed.ok && resumed.value.messages);
   });
 });

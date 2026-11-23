@@ -82,7 +82,7 @@ async function run(
           context: contextManager({
             summarizer: { adapter, model: MODEL },
             contextWindow: 40_000,
-            pricing: anthropicPricing[MODEL],
+            ...(anthropicPricing[MODEL] ? { pricing: anthropicPricing[MODEL] } : {}),
           }),
         }
       : {}),

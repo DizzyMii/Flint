@@ -372,3 +372,55 @@ describe('streaming', () => {
     expect(u?.type === 'usage' && u.cost).toBeGreaterThan(0);
   });
 });
+
+describe('review regressions', () => {
+  const events = [
+    'event: message_start\r\ndata: {"message":{"usage":{"input_tokens":1000,"output_tokens":0}}}\r\n\r\n',
+    'event: content_block_start\r\ndata: {"index":0,"content_block":{"type":"text","text":""}}\r\n\r\n',
+    'event: content_block_delta\r\ndata: {"index":0,"delta":{"type":"text_delta","text":"partial"}}\r\n\r\n',
+  ];
+  const chunked = (parts: string[]): typeof globalThis.fetch =>
+    (async () =>
+      new Response(
+        new ReadableStream({
+          start(c) {
+            for (const p of parts) c.enqueue(new TextEncoder().encode(p));
+            c.close();
+          },
+        }),
+      )) as typeof fetch;
+
+  it('treats a stream that ends before message_stop as a retryable failure', async () => {
+    const a = anthropicAdapter({ apiKey: 'k', fetch: chunked(events) });
+    const err = await collect(a.stream({ model: 'm', messages: [user('x')] })).catch((e) => e);
+    expect((err as AdapterError).code).toBe('adapter.stream_truncated');
+    expect((err as AdapterError).retryable).toBe(true);
+  });
+
+  it('parses CRLF events split across network chunks', async () => {
+    const full = [
+      ...events,
+      'event: content_block_stop\r\ndata: {"index":0}\r\n\r\n',
+      'event: message_delta\r\ndata: {"delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":2}}\r\n\r\n',
+      'event: message_stop\r\ndata: {}\r\n\r\n',
+    ].join('');
+    const pieces = full.split(/(?<=\r)/);
+    const a = anthropicAdapter({ apiKey: 'k', fetch: chunked(pieces) });
+    const chunks = await collect(a.stream({ model: 'm', messages: [user('x')] }));
+    expect(
+      chunks.filter((c) => c.type === 'text').map((c) => c.type === 'text' && c.delta),
+    ).toEqual(['partial']);
+    expect(chunks.at(-1)).toEqual({ type: 'end', reason: 'end' });
+  });
+
+  it('drops empty non-final assistant turns the API would reject', async () => {
+    const captured: Captured[] = [];
+    const a = anthropicAdapter({ apiKey: 'k', fetch: jsonFetch([{ body: msg([]) }], captured) });
+    await a.call({
+      model: 'm',
+      cache: 'off',
+      messages: [user('a'), { role: 'assistant', content: '' }, user('b')],
+    });
+    expect((captured[0]?.body.messages as unknown[]).length).toBe(2);
+  });
+});

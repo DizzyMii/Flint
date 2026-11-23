@@ -263,8 +263,11 @@ async function* parseSSE(
       const result = await reader.read();
       if (result.done) break;
       buffer += decoder.decode(result.value, { stream: true });
+      // Normalize line endings, but hold back a trailing \r: its \n may arrive in the next chunk.
+      const held = buffer.endsWith('\r') ? '\r' : '';
+      buffer = (held ? buffer.slice(0, -1) : buffer).replace(/\r\n?/g, '\n');
       const parts = buffer.split('\n\n');
-      buffer = parts.pop() ?? '';
+      buffer = (parts.pop() ?? '') + held;
       for (const part of parts) {
         let event: string | null = null;
         let data = '';
@@ -276,6 +279,7 @@ async function* parseSSE(
       }
     }
     // Flush any remaining buffer content after stream closes
+    buffer = buffer.replace(/\r\n?/g, '\n');
     if (buffer.trim()) {
       let event: string | null = null;
       let data = '';
@@ -401,6 +405,7 @@ export function openaiCompatAdapter(opts: OpenAICompatAdapterOptions): ProviderA
       let finalFinishReason: string | null = null;
       let usage: Usage = { input: 0, output: 0 };
       let refused = false;
+      let sawDone = false;
 
       for await (const { event, data } of parseSSE(response.body)) {
         if (event === 'error') {
@@ -415,7 +420,10 @@ export function openaiCompatAdapter(opts: OpenAICompatAdapterOptions): ProviderA
             cause: parsed,
           });
         }
-        if (data === '[DONE]') break;
+        if (data === '[DONE]') {
+          sawDone = true;
+          break;
+        }
         let chunk: OpenAIStreamChunk;
         try {
           chunk = JSON.parse(data) as OpenAIStreamChunk;
@@ -445,6 +453,15 @@ export function openaiCompatAdapter(opts: OpenAICompatAdapterOptions): ProviderA
             }
           }
         }
+      }
+
+      if (!sawDone && finalFinishReason === null) {
+        // The connection closed mid-response: report it instead of passing off a partial answer.
+        throw new AdapterError('Stream ended before the response completed', {
+          code: 'adapter.stream_truncated',
+          kind: 'network',
+          retryable: true,
+        });
       }
 
       for (const [, stash] of toolStash) {

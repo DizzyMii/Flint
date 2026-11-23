@@ -147,10 +147,13 @@ export function contextManager(opts: ContextManagerOptions): ContextStrategy & {
     const from = Math.max(upto, sys);
     return [
       ...transcript.slice(0, sys),
+      // The summary is a user turn: it leaves the system prompt (and its cache entry) untouched,
+      // and the view always opens with a user message even when the cut lands before an
+      // assistant tool call.
       ...(summary !== undefined
         ? [
             {
-              role: 'system' as const,
+              role: 'user' as const,
               content: `Summary of earlier work in this session:\n${summary}`,
             },
           ]

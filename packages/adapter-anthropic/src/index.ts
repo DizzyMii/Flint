@@ -209,6 +209,11 @@ function normalizeMessages(messages: Message[]): {
       i++;
     } else {
       const blocks = assistantBlocks(msg);
+      // The API rejects empty assistant content anywhere but the final position.
+      if (blocks.length === 0 && i < messages.length - 1) {
+        i++;
+        continue;
+      }
       const plainText =
         blocks.length === 1 && blocks[0]?.type === 'text' && msg.providerContent === undefined;
       out.push({
@@ -387,15 +392,19 @@ async function* parseSSE(
     while (true) {
       const result = await reader.read();
       if (result.done) break;
-      buffer += decoder.decode(result.value, { stream: true }).replace(/\r\n/g, '\n');
+      buffer += decoder.decode(result.value, { stream: true });
+      // Normalize line endings, but hold back a trailing \r: its \n may arrive in the next chunk.
+      const held = buffer.endsWith('\r') ? '\r' : '';
+      buffer = (held ? buffer.slice(0, -1) : buffer).replace(/\r\n?/g, '\n');
       const parts = buffer.split('\n\n');
-      buffer = parts.pop() ?? '';
+      buffer = (parts.pop() ?? '') + held;
       for (const part of parts) {
         const ev = parseEvent(part);
         if (ev) yield ev;
       }
     }
     // A final event may not be terminated by a blank line.
+    buffer = buffer.replace(/\r\n?/g, '\n');
     if (buffer.trim()) {
       const ev = parseEvent(buffer);
       if (ev) yield ev;
@@ -482,10 +491,21 @@ export function anthropicAdapter(opts: AnthropicAdapterOptions): ProviderAdapter
       let startUsage: AnthropicUsage = {};
       let deltaUsage: AnthropicUsage = {};
       let stopReason: AnthropicStopReason | null = null;
+      let complete = false;
 
       for await (const { event, data } of parseSSE(response.body)) {
         if (event === 'ping') continue;
-        const parsed = JSON.parse(data) as Record<string, unknown>;
+        let parsed: Record<string, unknown>;
+        try {
+          parsed = JSON.parse(data) as Record<string, unknown>;
+        } catch (e) {
+          throw new AdapterError(`Malformed stream event "${event}"`, {
+            code: 'adapter.stream',
+            cause: e,
+            kind: 'server',
+            retryable: true,
+          });
+        }
 
         if (event === 'error') {
           const err = (parsed.error ?? {}) as { type?: string; message?: string };
@@ -543,6 +563,7 @@ export function anthropicAdapter(opts: AnthropicAdapterOptions): ProviderAdapter
           if (delta.stop_reason) stopReason = delta.stop_reason;
           deltaUsage = { ...deltaUsage, ...((parsed.usage as AnthropicUsage) ?? {}) };
         } else if (event === 'message_stop') {
+          complete = true;
           const usage = mapUsage({ ...startUsage, ...deltaUsage });
           yield { type: 'usage', usage, ...priced(usage, req.model) };
           const ordered = [...blocks.entries()].sort((a, b) => a[0] - b[0]).map(([, b]) => b);
@@ -560,6 +581,14 @@ export function anthropicAdapter(opts: AnthropicAdapterOptions): ProviderAdapter
           yield { type: 'message', message };
           yield { type: 'end', reason: mapStopReason(stopReason) };
         }
+      }
+      if (!complete) {
+        // The connection closed mid-response: report it instead of passing off a partial answer.
+        throw new AdapterError('Stream ended before message_stop', {
+          code: 'adapter.stream_truncated',
+          kind: 'network',
+          retryable: true,
+        });
       }
     },
   };

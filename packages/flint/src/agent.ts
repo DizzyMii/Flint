@@ -3,7 +3,13 @@ import type { Budget } from './budget.ts';
 import type { Transform } from './compress.ts';
 import type { CompactionRecord, ContextStrategy } from './context.ts';
 import { FlintError } from './errors.ts';
-import { type CallOptions, type CallOutput, call, callStream } from './primitives/call.ts';
+import {
+  type CallOptions,
+  type CallOutput,
+  call,
+  callStream,
+  overBudgetResponse,
+} from './primitives/call.ts';
 import { execute } from './primitives/execute.ts';
 import type {
   AssistantMessage,
@@ -294,6 +300,22 @@ export async function* agentStream(
       const err =
         result?.error ??
         new FlintError('Agent call produced no result', { code: 'agent.internal' });
+      const billed = overBudgetResponse(err);
+      if (billed) {
+        // The provider answered and charged for it; keep it in the accounts and the transcript.
+        usage = addUsage(usage, billed.usage);
+        cost += billed.cost ?? 0;
+        yield emit({
+          type: 'response',
+          step,
+          message: billed.message,
+          usage: billed.usage,
+          ...(billed.cost !== undefined ? { cost: billed.cost } : {}),
+          stopReason: billed.stopReason,
+        });
+        messages.push(billed.message);
+        yield emit({ type: 'message', message: billed.message });
+      }
       yield emit({ type: 'error', error: errorInfo(err) });
       return fail(err);
     }
@@ -375,7 +397,8 @@ export async function agent(options: AgentOptions): Promise<Result<AgentOutput>>
 export function transcriptFrom(events: AgentEvent[]): Message[] {
   const out: Message[] = [];
   for (const e of events) {
-    if (e.type === 'start') out.push(...e.messages);
+    // A resumed run starts from the whole prior transcript, so a later start replaces, not appends.
+    if (e.type === 'start') out.splice(0, out.length, ...e.messages);
     else if (e.type === 'message') out.push(e.message);
   }
   // A crash between a tool-calling response and its results leaves calls unanswered; drop that

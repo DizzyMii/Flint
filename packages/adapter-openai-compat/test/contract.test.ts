@@ -545,3 +545,48 @@ describe('end to end with call()', () => {
     expect(res.ok && res.value.message.content).toBe('done');
   });
 });
+
+describe('stream robustness', () => {
+  const chunked = (parts: string[]): typeof globalThis.fetch =>
+    (async () =>
+      new Response(
+        new ReadableStream({
+          start(c) {
+            for (const p of parts) c.enqueue(new TextEncoder().encode(p));
+            c.close();
+          },
+        }),
+      )) as typeof fetch;
+
+  it('treats a stream without finish_reason or [DONE] as truncated', async () => {
+    const a = openaiCompatAdapter({
+      baseUrl: 'http://x',
+      apiKey: 'k',
+      fetch: chunked(['data: {"choices":[{"delta":{"content":"par"}}]}\n\n']),
+    });
+    let err: unknown;
+    try {
+      for await (const _ of a.stream({ model: 'm', messages: [{ role: 'user', content: 'x' }] })) {
+        // drain
+      }
+    } catch (e) {
+      err = e;
+    }
+    expect((err as { code?: string }).code).toBe('adapter.stream_truncated');
+  });
+
+  it('parses CRLF-delimited events split across chunks', async () => {
+    const full =
+      'data: {"choices":[{"delta":{"content":"hi"},"finish_reason":null}]}\r\n\r\ndata: {"choices":[{"delta":{},"finish_reason":"stop"}]}\r\n\r\ndata: [DONE]\r\n\r\n';
+    const a = openaiCompatAdapter({
+      baseUrl: 'http://x',
+      apiKey: 'k',
+      fetch: chunked(full.split(/(?<=\r)/)),
+    });
+    const out: string[] = [];
+    for await (const c of a.stream({ model: 'm', messages: [{ role: 'user', content: 'x' }] })) {
+      if (c.type === 'text') out.push(c.delta);
+    }
+    expect(out).toEqual(['hi']);
+  });
+});
