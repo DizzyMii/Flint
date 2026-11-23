@@ -6,7 +6,7 @@ This example uses `@flint/graph` to build a 4-node workflow with a conditional b
 
 - `graph()` — building a typed state-machine workflow
 - Node definitions and edge conditions
-- Fan-out and conditional branching
+- Conditional branching
 - `runStream()` events
 - Checkpointing to resume after failure
 
@@ -22,7 +22,7 @@ start
 ## Setup
 
 ```ts
-import { graph } from '@flint/graph';
+import { edge, graph, memoryCheckpointStore, node, state } from '@flint/graph';
 import { call } from 'flint';
 import { budget } from 'flint/budget';
 import { anthropicAdapter } from '@flint/adapter-anthropic';
@@ -96,17 +96,23 @@ async function synthesizeNode(state: WorkflowState): Promise<WorkflowState> {
 ## Build the graph
 
 ```ts
-const workflow = graph<WorkflowState>()
-  .node('classify', classifyNode)
-  .node('quick-answer', quickAnswerNode)
-  .node('research', researchNode)
-  .node('synthesize', synthesizeNode)
-  // Conditional routing after classify
-  .edge('classify', (state) => state.complexity === 'simple' ? 'quick-answer' : 'research')
-  .edge('quick-answer', '__end__')
-  .edge('research', 'synthesize')
-  .edge('synthesize', '__end__')
-  .start('classify');
+const workflow = graph<WorkflowState>({
+  state: state<WorkflowState>(),
+  entry: 'classify',
+  nodes: {
+    classify: node(classifyNode),
+    'quick-answer': node(quickAnswerNode),
+    research: node(researchNode),
+    synthesize: node(synthesizeNode),
+  },
+  edges: [
+    // Conditional routing after classify
+    edge<WorkflowState>('classify', 'quick-answer', (s) => s.complexity === 'simple'),
+    edge<WorkflowState>('classify', 'research'),
+    edge<WorkflowState>('research', 'synthesize'),
+    // 'quick-answer' and 'synthesize' have no outgoing edges, so they end the run
+  ],
+});
 ```
 
 ## Run with event streaming
@@ -116,40 +122,34 @@ const initialState: WorkflowState = {
   query: 'What is the time complexity of quicksort in the worst case, and why?',
 };
 
-const events = workflow.runStream(initialState);
+const ctx = { adapter, model: 'claude-opus-4-7', budget: budget({ maxSteps: 10 }) };
 
-for await (const event of events) {
-  switch (event.type) {
-    case 'node_start':
-      console.log(`→ ${event.node}`);
-      break;
-    case 'node_complete':
-      console.log(`  ✓ ${event.node} (${event.duration}ms)`);
-      if (event.node === 'classify') {
-        console.log(`  complexity: ${event.state.complexity}`);
-      }
-      break;
-    case 'workflow_complete':
-      console.log('\nFinal answer:');
-      console.log(event.state.finalAnswer);
-      break;
-    case 'workflow_error':
-      console.error('Error at', event.node, ':', event.error.message);
-      break;
+let finalState = initialState;
+for await (const event of workflow.runStream(initialState, ctx)) {
+  if (event.type === 'enter') console.log(`→ ${event.node}`);
+  if (event.type === 'exit') {
+    console.log(`  ✓ ${event.node}`);
+    if (event.node === 'classify') console.log(`  complexity: ${event.state.complexity}`);
+    finalState = event.state;
   }
 }
+
+console.log('\nFinal answer:');
+console.log(finalState.finalAnswer);
 ```
+
+`runStream()` throws if a node fails. Wrap the loop in `try`/`catch`, or use `run()`, which returns a `Result` instead.
 
 ## Expected output
 
 ```
 → classify
-  ✓ classify (340ms)
+  ✓ classify
   complexity: complex
 → research
-  ✓ research (2100ms)
+  ✓ research
 → synthesize
-  ✓ synthesize (890ms)
+  ✓ synthesize
 
 Final answer:
 Quicksort has O(n²) worst-case time complexity, which occurs when the pivot
@@ -158,20 +158,21 @@ selection consistently produces maximally unbalanced partitions...
 
 ## Checkpointing for resumption
 
+Pass a checkpoint store and a run ID. The runner saves the next node and the current state after every node, and deletes the checkpoint when the run finishes. If a run fails, calling it again with the same `runId` resumes at the node that failed. Nodes that already finished are not run again.
+
 ```ts
-import { writeFile, readFile } from 'node:fs/promises';
+const store = memoryCheckpointStore<WorkflowState>();
+const checkpoint = { store, runId: 'query-42' };
 
-// Save checkpoint after each node
-const events = workflow.runStream(initialState, {
-  onCheckpoint: async (node, state) => {
-    await writeFile(`checkpoint-${node}.json`, JSON.stringify(state));
-  },
-});
-
-// Resume from a checkpoint after failure
-const savedState = JSON.parse(await readFile('checkpoint-research.json', 'utf-8'));
-const resumeEvents = workflow.runStream(savedState, { startFrom: 'synthesize' });
+let res = await workflow.run(initialState, ctx, { checkpoint });
+if (!res.ok) {
+  console.error('Failed:', res.error.message);
+  // e.g. 'synthesize' hit a transient API error: retry without re-running classify or research
+  res = await workflow.run(initialState, { ...ctx, budget: budget({ maxSteps: 10 }) }, { checkpoint });
+}
 ```
+
+To resume after a process restart, implement `CheckpointStore<WorkflowState>` on durable storage (a database or files) in place of `memoryCheckpointStore()`.
 
 ## See also
 

@@ -108,7 +108,7 @@ describe('anthropicAdapter — call() HTTP', () => {
 
     expect(capturedHeaders['x-api-key']).toBe('sk-mykey');
     expect(capturedHeaders['anthropic-version']).toBe('2023-06-01');
-    expect(capturedHeaders['anthropic-beta']).toBe('prompt-caching-2024-07-31');
+    expect(capturedHeaders['anthropic-beta']).toBeUndefined(); // prompt caching is GA
   });
 
   it('respects custom baseUrl', async () => {
@@ -153,6 +153,7 @@ describe('anthropicAdapter — call() message normalization', () => {
         { role: 'system', content: 'You are helpful.' },
         { role: 'user', content: 'Hello' },
       ],
+      cache: 'off',
     });
 
     expect(capturedBody.system).toEqual([{ type: 'text', text: 'You are helpful.' }]);

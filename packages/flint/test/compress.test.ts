@@ -76,7 +76,7 @@ describe('dedup', () => {
     expect(out).toHaveLength(1);
   });
 
-  it('ignores toolCalls when computing duplicate key', async () => {
+  it('never dedups tool-calling turns (their ids bind tool results)', async () => {
     const t = dedup();
     const msgs: Message[] = [
       {
@@ -91,7 +91,7 @@ describe('dedup', () => {
       },
     ];
     const out = await t(msgs, {});
-    expect(out).toHaveLength(1);
+    expect(out).toHaveLength(2);
   });
 
   it('does not mutate input array', async () => {

@@ -1,12 +1,29 @@
 import type { NormalizedRequest, NormalizedResponse, ProviderAdapter } from 'flint';
-import type { ContentPart, Message, StreamChunk, ToolCall } from 'flint';
-import { AdapterError } from 'flint/errors';
+import type {
+  ContentPart,
+  Message,
+  ModelPricing,
+  PriceTable,
+  StopReason,
+  StreamChunk,
+  ToolCall,
+  Usage,
+} from 'flint';
+import { lookupPricing } from 'flint';
+import { AdapterError, httpError, networkError } from 'flint/errors';
 
 export type OpenAICompatAdapterOptions = {
   apiKey?: string;
   baseUrl: string;
   fetch?: typeof globalThis.fetch;
   defaultHeaders?: Record<string, string>;
+  /** Body fields merged into every request, before the per-request `extra`. */
+  extraBody?: Record<string, unknown>;
+  /**
+   * Per-model prices (USD per million tokens). No built-in table is shipped because prices differ
+   * per provider; without one, `maxDollars` budgets fail with `budget.unpriced`.
+   */
+  pricing?: PriceTable | ((model: string) => ModelPricing | undefined);
 };
 
 // ---------------------------------------------------------------------------
@@ -42,9 +59,21 @@ type OpenAIRequestBody = {
   temperature?: number;
   stop?: string[];
   stream?: boolean;
+  stream_options?: { include_usage: boolean };
+  response_format?: {
+    type: 'json_schema';
+    json_schema: { name: string; schema: Record<string, unknown>; strict: boolean };
+  };
 };
 
-type OpenAIUsage = { prompt_tokens: number; completion_tokens: number; total_tokens: number };
+type OpenAIUsage = {
+  prompt_tokens: number;
+  completion_tokens: number;
+  total_tokens: number;
+  prompt_tokens_details?: { cached_tokens?: number } | null;
+  /** DeepSeek reports cache hits here instead of `prompt_tokens_details`. */
+  prompt_cache_hit_tokens?: number;
+};
 
 type OpenAIResponse = {
   id: string;
@@ -53,10 +82,15 @@ type OpenAIResponse = {
   model: string;
   choices: Array<{
     index: number;
-    message: { role: 'assistant'; content: string | null; tool_calls?: OpenAIToolCall[] };
+    message: {
+      role: 'assistant';
+      content: string | null;
+      refusal?: string | null;
+      tool_calls?: OpenAIToolCall[];
+    };
     finish_reason: string;
   }>;
-  usage: OpenAIUsage;
+  usage?: OpenAIUsage;
 };
 
 type OpenAIDeltaToolCall = {
@@ -73,7 +107,12 @@ type OpenAIStreamChunk = {
   model: string;
   choices: Array<{
     index: number;
-    delta: { role?: string; content?: string | null; tool_calls?: OpenAIDeltaToolCall[] };
+    delta: {
+      role?: string;
+      content?: string | null;
+      refusal?: string | null;
+      tool_calls?: OpenAIDeltaToolCall[];
+    };
     finish_reason: string | null;
   }>;
   usage?: OpenAIUsage | null;
@@ -83,11 +122,38 @@ type OpenAIStreamChunk = {
 // Stop reason mapping
 // ---------------------------------------------------------------------------
 
-function mapStopReason(reason: string | null | undefined): 'end' | 'tool_call' | 'max_tokens' {
+function mapStopReason(reason: string | null | undefined): StopReason {
   if (reason === 'tool_calls') return 'tool_call';
   if (reason === 'length') return 'max_tokens';
+  if (reason === 'content_filter') return 'refusal';
   // OpenAI reports both natural end and stop-sequence hits as 'stop' — cannot distinguish
   return 'end';
+}
+
+// ---------------------------------------------------------------------------
+// Usage and tool-argument normalization: OpenAI -> Flint
+// ---------------------------------------------------------------------------
+
+/** OpenAI's `prompt_tokens` includes cached tokens; Flint's `input` counts uncached tokens only. */
+function normalizeUsage(u: OpenAIUsage | null | undefined): Usage {
+  if (!u) return { input: 0, output: 0 };
+  const cached = u.prompt_tokens_details?.cached_tokens ?? u.prompt_cache_hit_tokens ?? 0;
+  return {
+    input: Math.max(0, (u.prompt_tokens ?? 0) - cached),
+    output: u.completion_tokens ?? 0,
+    ...(cached > 0 ? { cached } : {}),
+  };
+}
+
+function toToolCall(id: string, name: string, rawArgs: string): ToolCall {
+  // Some servers send '' for tools that take no arguments.
+  if (rawArgs.trim() === '') return { id, name, arguments: {} };
+  try {
+    return { id, name, arguments: JSON.parse(rawArgs) };
+  } catch (e) {
+    const parseError = e instanceof Error ? e.message : String(e);
+    return { id, name, arguments: {}, parseError };
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -150,7 +216,11 @@ function normalizeMessages(messages: Message[]): OpenAIMessage[] {
 // Build request body
 // ---------------------------------------------------------------------------
 
-function buildBody(req: NormalizedRequest, streaming: boolean): OpenAIRequestBody {
+function buildBody(
+  req: NormalizedRequest,
+  streaming: boolean,
+  extraBody: Record<string, unknown> | undefined,
+): Record<string, unknown> {
   const body: OpenAIRequestBody = { model: req.model, messages: normalizeMessages(req.messages) };
   if (req.maxTokens !== undefined) body.max_tokens = req.maxTokens;
   if (req.temperature !== undefined) body.temperature = req.temperature;
@@ -165,8 +235,17 @@ function buildBody(req: NormalizedRequest, streaming: boolean): OpenAIRequestBod
       },
     }));
   }
-  if (streaming) body.stream = true;
-  return body;
+  if (req.jsonSchema) {
+    body.response_format = {
+      type: 'json_schema',
+      json_schema: { name: 'response', schema: req.jsonSchema, strict: true },
+    };
+  }
+  if (streaming) {
+    body.stream = true;
+    body.stream_options = { include_usage: true };
+  }
+  return { ...body, ...extraBody, ...req.extra };
 }
 
 // ---------------------------------------------------------------------------
@@ -216,9 +295,14 @@ async function* parseSSE(
 // ---------------------------------------------------------------------------
 
 async function throwHttpError(response: Response, label: string): Promise<never> {
-  let errorBody: unknown;
+  let errorBody: unknown = null;
   try {
-    errorBody = await response.json();
+    const text = await response.text();
+    try {
+      errorBody = JSON.parse(text);
+    } catch {
+      errorBody = text || null;
+    }
   } catch {
     errorBody = null;
   }
@@ -230,11 +314,10 @@ async function throwHttpError(response: Response, label: string): Promise<never>
     typeof errorBody.error === 'object' &&
     'message' in errorBody.error
       ? String((errorBody.error as { message: unknown }).message)
-      : `${label} ${response.status}`;
-  throw new AdapterError(msg, {
-    code: `adapter.http.${response.status}`,
-    cause: { status: response.status, body: errorBody },
-  });
+      : typeof errorBody === 'string'
+        ? errorBody
+        : `${label} ${response.status}`;
+  throw httpError('openai-compat', response.status, msg, response.headers, errorBody);
 }
 
 // ---------------------------------------------------------------------------
@@ -244,6 +327,13 @@ async function throwHttpError(response: Response, label: string): Promise<never>
 export function openaiCompatAdapter(opts: OpenAICompatAdapterOptions): ProviderAdapter {
   const fetchFn = opts.fetch ?? globalThis.fetch;
   const baseUrl = opts.baseUrl.replace(/\/$/, '');
+  const priceTable = opts.pricing;
+  const pricing =
+    typeof priceTable === 'function'
+      ? priceTable
+      : priceTable !== undefined
+        ? (model: string) => lookupPricing(priceTable, model)
+        : undefined;
 
   function buildHeaders(): Record<string, string> {
     const headers: Record<string, string> = {
@@ -257,6 +347,7 @@ export function openaiCompatAdapter(opts: OpenAICompatAdapterOptions): ProviderA
   return {
     name: 'openai-compat',
     capabilities: { promptCache: false, structuredOutput: true, parallelTools: true },
+    ...(pricing !== undefined ? { pricing } : {}),
 
     async call(req: NormalizedRequest): Promise<NormalizedResponse> {
       let response: Response;
@@ -264,11 +355,11 @@ export function openaiCompatAdapter(opts: OpenAICompatAdapterOptions): ProviderA
         response = await fetchFn(`${baseUrl}/chat/completions`, {
           method: 'POST',
           headers: buildHeaders(),
-          body: JSON.stringify(buildBody(req, false)),
+          body: JSON.stringify(buildBody(req, false, opts.extraBody)),
           ...(req.signal != null ? { signal: req.signal } : {}),
         });
       } catch (e) {
-        throw new AdapterError('Network error', { code: 'adapter.network', cause: e });
+        throw networkError(e);
       }
       if (!response.ok) await throwHttpError(response, 'OpenAI-compat');
 
@@ -276,24 +367,16 @@ export function openaiCompatAdapter(opts: OpenAICompatAdapterOptions): ProviderA
       const choice = data.choices[0];
       if (!choice) throw new AdapterError('Empty choices array', { code: 'adapter.parse' });
 
-      const content = choice.message.content ?? '';
-      const toolCalls: ToolCall[] = [];
-      if (choice.message.tool_calls && choice.message.tool_calls.length > 0) {
-        for (const tc of choice.message.tool_calls) {
-          let parsedArgs: unknown = {};
-          try {
-            parsedArgs = JSON.parse(tc.function.arguments);
-          } catch {
-            parsedArgs = {};
-          }
-          toolCalls.push({ id: tc.id, name: tc.function.name, arguments: parsedArgs });
-        }
-      }
+      const refusal = choice.message.refusal;
+      const content = refusal != null ? refusal : (choice.message.content ?? '');
+      const toolCalls: ToolCall[] = (choice.message.tool_calls ?? []).map((tc) =>
+        toToolCall(tc.id, tc.function.name, tc.function.arguments ?? ''),
+      );
 
       return {
         message: { role: 'assistant', content, ...(toolCalls.length > 0 ? { toolCalls } : {}) },
-        usage: { input: data.usage.prompt_tokens, output: data.usage.completion_tokens },
-        stopReason: mapStopReason(choice.finish_reason),
+        usage: normalizeUsage(data.usage),
+        stopReason: refusal != null ? 'refusal' : mapStopReason(choice.finish_reason),
         raw: data,
       };
     },
@@ -304,11 +387,11 @@ export function openaiCompatAdapter(opts: OpenAICompatAdapterOptions): ProviderA
         response = await fetchFn(`${baseUrl}/chat/completions`, {
           method: 'POST',
           headers: buildHeaders(),
-          body: JSON.stringify(buildBody(req, true)),
+          body: JSON.stringify(buildBody(req, true, opts.extraBody)),
           ...(req.signal != null ? { signal: req.signal } : {}),
         });
       } catch (e) {
-        throw new AdapterError('Network error', { code: 'adapter.network', cause: e });
+        throw networkError(e);
       }
       if (!response.ok) await throwHttpError(response, 'OpenAI-compat');
       if (!response.body) throw new AdapterError('No response body', { code: 'adapter.network' });
@@ -316,8 +399,8 @@ export function openaiCompatAdapter(opts: OpenAICompatAdapterOptions): ProviderA
       type ToolStash = { id: string; name: string; args: string };
       const toolStash = new Map<number, ToolStash>();
       let finalFinishReason: string | null = null;
-      let promptTokens = 0;
-      let completionTokens = 0;
+      let usage: Usage = { input: 0, output: 0 };
+      let refused = false;
 
       for await (const { event, data } of parseSSE(response.body)) {
         if (event === 'error') {
@@ -339,15 +422,16 @@ export function openaiCompatAdapter(opts: OpenAICompatAdapterOptions): ProviderA
         } catch {
           continue;
         }
-        if (chunk.usage) {
-          promptTokens = chunk.usage.prompt_tokens;
-          completionTokens = chunk.usage.completion_tokens;
-        }
-        const choice = chunk.choices[0];
+        if (chunk.usage) usage = normalizeUsage(chunk.usage);
+        const choice = chunk.choices?.[0];
         if (!choice) continue;
         if (choice.finish_reason) finalFinishReason = choice.finish_reason;
-        const delta = choice.delta;
+        const delta = choice.delta ?? {};
         if (delta.content) yield { type: 'text', delta: delta.content };
+        if (delta.refusal) {
+          refused = true;
+          yield { type: 'text', delta: delta.refusal };
+        }
         if (delta.tool_calls) {
           for (const tc of delta.tool_calls) {
             const idx = tc.index;
@@ -364,20 +448,11 @@ export function openaiCompatAdapter(opts: OpenAICompatAdapterOptions): ProviderA
       }
 
       for (const [, stash] of toolStash) {
-        let parsedArgs: unknown = {};
-        try {
-          parsedArgs = JSON.parse(stash.args);
-        } catch {
-          parsedArgs = {};
-        }
-        yield {
-          type: 'tool_call',
-          call: { id: stash.id, name: stash.name, arguments: parsedArgs },
-        };
+        yield { type: 'tool_call', call: toToolCall(stash.id, stash.name, stash.args) };
       }
 
-      yield { type: 'usage', usage: { input: promptTokens, output: completionTokens } };
-      yield { type: 'end', reason: mapStopReason(finalFinishReason) };
+      yield { type: 'usage', usage };
+      yield { type: 'end', reason: refused ? 'refusal' : mapStopReason(finalFinishReason) };
     },
   };
 }

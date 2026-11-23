@@ -1,5 +1,8 @@
 # Graph
 
+> [!WARNING]
+> **Experimental — not covered by the semver stability policy.** `@flint/graph` may change in any release, including patch releases. Pin an exact version and review the changelog before upgrading.
+
 A stateful graph DSL for multi-node agent workflows. Define typed nodes, conditional edges, and run the graph to completion — or stream events node-by-node.
 
 ## Install
@@ -13,9 +16,6 @@ npm install @flint/graph
 ```ts
 import { state, node, edge, graph, memoryCheckpointStore } from '@flint/graph';
 ```
-
-> [!WARNING]
-> **v0 API** — The graph DSL is at v0 stability. Types and function signatures may change between minor releases. Pin your version and review the changelog before upgrading.
 
 ---
 
@@ -32,9 +32,46 @@ A graph has four building blocks:
 
 **Terminal state** — a node with no outgoing edges is a terminal node. When the runner reaches it, execution stops and the final state is returned.
 
-**Fan-out** — an edge can route to multiple nodes at once (`to: ['nodeA', 'nodeB']`). The targets run concurrently with a `Promise.all`, and their resulting states are shallow-merged before execution continues.
+**Fan-out** — an edge can route to multiple nodes at once (`to: ['nodeA', 'nodeB']`). See [Fan-out and join](#fan-out-and-join).
 
 **Conditional routing** — supply a `when` predicate to an edge. The runner picks the first matching edge from a node. If no edge matches, the run fails with `graph.no_matching_edge`.
+
+**Validation** — `graph()` checks the definition when it is called: the `entry` node and every edge endpoint must exist in `nodes`, and `from`/`to` arrays must be non-empty. A bad definition throws a `TypeError` immediately rather than failing mid-run.
+
+---
+
+## Fan-out and join
+
+When the matching edge has more than one target, the runner:
+
+1. Runs every target concurrently on the **pre-fan-out state**. Each target consumes one budget step, the same as any other node.
+2. Merges the results in target order: starting from the pre-fan-out state, each target contributes the top-level keys it changed. If two targets change the same key, the later target in the array wins.
+3. For each target, evaluates its first matching outgoing edge against the **merged** state, then decides:
+   - Every target is terminal (no outgoing edges) → the graph ends with the merged state.
+   - Every non-terminal target leads to the same single node → execution continues at that **join** node.
+   - Targets lead to different nodes → the run fails with `graph.ambiguous_join`.
+   - A target has outgoing edges but none match → the run fails with `graph.no_matching_edge`.
+
+```ts
+type Research = { query: string; web?: string; papers?: string; answer?: string };
+
+const g = graph<Research>({
+  state: state<Research>(),
+  entry: 'plan',
+  nodes: {
+    plan: node<Research>((s) => s),
+    web: node<Research>(async (s) => ({ ...s, web: await searchWeb(s.query) })),
+    papers: node<Research>(async (s) => ({ ...s, papers: await searchPapers(s.query) })),
+    synthesize: node<Research>(async (s) => ({ ...s, answer: combine(s.web, s.papers) })),
+  },
+  edges: [
+    edge<Research>('plan', ['web', 'papers']), // fan-out
+    edge<Research>(['web', 'papers'], 'synthesize'), // join
+  ],
+});
+```
+
+The join node can fan out again. A fan-out target's own edge must lead to a single node; if it leads to another fan-out, the run fails with `graph.ambiguous_join`.
 
 ---
 
@@ -194,10 +231,30 @@ type GraphDefinition<S> = {
 };
 
 type Graph<S> = {
-  run(initialState: S, ctx: RunContext): Promise<Result<S>>;
-  runStream(initialState: S, ctx: RunContext): AsyncIterable<GraphEvent<S>>;
+  run(initialState: S, ctx: RunContext, opts?: RunOptions<S>): Promise<Result<S>>;
+  runStream(initialState: S, ctx: RunContext, opts?: RunOptions<S>): AsyncIterable<GraphEvent<S>>;
+};
+
+type RunOptions<S> = {
+  checkpoint?: { store: CheckpointStore<S>; runId: string };
 };
 ```
+
+---
+
+## Errors
+
+`run()` never throws. Every failure comes back as `{ ok: false, error }`:
+
+| Failure | `error` |
+|---|---|
+| A node function throws a non-`FlintError` | `FlintError` with code `graph.node_failed`; the message names the node and `cause` is the original error |
+| A node throws a `FlintError` (for example from `call()` or `agent()`) | That error, unchanged |
+| The budget runs out | `BudgetExhausted`, unchanged |
+| No edge matches | `FlintError` with code `graph.no_matching_edge` |
+| Fan-out targets lead to different nodes | `FlintError` with code `graph.ambiguous_join` |
+
+`runStream()` throws the same errors from the iterator instead of returning a `Result`.
 
 ---
 
@@ -216,6 +273,8 @@ Each node execution emits:
 1. `enter` — before the node function runs
 2. `exit` — after the node function returns
 3. `edge` — the transition that was taken
+
+On a fan-out, the runner emits an `edge` and `enter` for each target, then an `exit` for each target once all of them finish, then an `edge` from each non-terminal target to the join node, carrying the merged state.
 
 ### Example
 
@@ -239,7 +298,7 @@ for await (const event of stream) {
 }
 ```
 
-If a `BudgetExhausted` error occurs inside `runStream()`, it propagates as a thrown error from the iterator (not wrapped in a `Result`). Catch it at the `for await` level:
+Errors inside `runStream()`, `BudgetExhausted` included, are thrown from the iterator rather than wrapped in a `Result`. Catch them at the `for await` level:
 
 ```ts
 try {
@@ -253,9 +312,13 @@ try {
 
 ---
 
-## Memory checkpointing
+## Checkpointing
 
-`memoryCheckpointStore()` creates an in-memory store that saves graph state by run ID and node ID. This is useful for resuming failed runs or inspecting intermediate state during development.
+Pass `{ checkpoint: { store, runId } }` as the third argument to `run()` or `runStream()` to make a run resumable:
+
+- After each node completes, the runner calls `store.save(runId, nextNodeId, state)`, where `nextNodeId` is the node it will run next. A fan-out is saved as one step: the checkpoint is written after the targets finish and the join is resolved, so a failure inside a fan-out resumes from the node that fanned out.
+- When the run reaches a terminal node, it calls `store.delete(runId)`.
+- When a run starts, it calls `store.load(runId)`. If a checkpoint exists, the run resumes from the saved node and state and ignores `initialState`.
 
 ```ts
 function memoryCheckpointStore<S>(): CheckpointStore<S>
@@ -267,90 +330,23 @@ interface CheckpointStore<S> {
 }
 ```
 
-The built-in `memoryCheckpointStore` does not persist across process restarts. For production use, implement `CheckpointStore<S>` against a database or durable storage.
-
 ### Example
 
 ```ts
 import { memoryCheckpointStore } from '@flint/graph';
 
 const store = memoryCheckpointStore<PipelineState>();
+const checkpoint = { store, runId: 'ticket-1234' };
 
-// Manually checkpoint after each node using runStream
-const runId = crypto.randomUUID();
-
-for await (const event of pipeline.runStream(initialState, ctx)) {
-  if (event.type === 'exit') {
-    await store.save(runId, event.node, event.state);
-  }
+const first = await pipeline.run(initialState, ctx, { checkpoint });
+if (!first.ok) {
+  // Suppose 'reviewer' failed. Nodes that already finished are not run again:
+  // the retry resumes at 'reviewer' with the state that 'drafter' produced.
+  const retry = await pipeline.run(initialState, ctx, { checkpoint });
 }
-
-// Later: inspect or resume
-const checkpoint = await store.load(runId);
-if (checkpoint) {
-  console.log(`Last completed node: ${checkpoint.nodeId}`);
-  console.log('State at checkpoint:', checkpoint.state);
-}
-
-// Clean up when done
-await store.delete(runId);
 ```
 
----
-
-## graph() API summary
-
-```ts
-// Build
-const g = graph<State>()
-  .node(name, handler)
-  .edge(from, to | conditionFn)
-  .fanOut(from, [to1, to2])
-  .fanIn([from1, from2], to)
-  .start(nodeName);
-
-// Run
-const result = await g.run(initialState);
-const events = g.runStream(initialState, options?);
-```
-
-## Edge conditions
-
-```ts
-// Static edge
-.edge('classify', 'next-node')
-
-// Conditional edge — function receives current state
-.edge('classify', (state) => state.category === 'A' ? 'node-a' : 'node-b')
-
-// Terminal edge
-.edge('final-node', '__end__')
-```
-
-## runStream() events
-
-```ts
-type GraphEvent<State> =
-  | { type: 'node_start'; node: string; state: State }
-  | { type: 'node_complete'; node: string; state: State; duration: number }
-  | { type: 'workflow_complete'; state: State }
-  | { type: 'workflow_error'; node: string; error: Error; state: State };
-```
-
-## Checkpointing
-
-```ts
-const events = g.runStream(initialState, {
-  onCheckpoint: async (node, state) => {
-    // Called after each node_complete — save to resume later
-    await db.save(`checkpoint:${node}`, state);
-  },
-});
-
-// Resume from a saved checkpoint
-const savedState = await db.load('checkpoint:research');
-const resumeEvents = g.runStream(savedState, { startFrom: 'synthesize' });
-```
+`memoryCheckpointStore()` keeps checkpoints in process memory, so they do not survive a restart. For durable resumption, implement `CheckpointStore<S>` against a database or other persistent storage. The stored state must survive your store's serialization: if you save to JSON, avoid `Date`, `Map` and class instances in the state.
 
 ## See also
 

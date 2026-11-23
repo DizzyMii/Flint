@@ -152,8 +152,8 @@ describe('graph.run – fan-out', () => {
     }
   });
 
-  it('fan-out uses first target in array for next edge lookup', async () => {
-    // After fan-out to ['branch1','branch2'], edge from 'branch1' should be followed
+  it('fan-out continues at the join reached by the non-terminal target', async () => {
+    // branch1 → done; branch2 is terminal, so the join is 'done'
     type FanState = { a: number; b: number; terminal: boolean };
     const g = graph<FanState>({
       state: state<FanState>(),
@@ -164,10 +164,7 @@ describe('graph.run – fan-out', () => {
         branch2: node<FanState>(async (s) => ({ ...s, b: s.b + 1 })),
         done: node<FanState>(async (s) => ({ ...s, terminal: true })),
       },
-      edges: [
-        edge<FanState>('start', ['branch1', 'branch2']),
-        edge<FanState>('branch1', 'done'), // edge from first fan-out target
-      ],
+      edges: [edge<FanState>('start', ['branch1', 'branch2']), edge<FanState>('branch1', 'done')],
     });
 
     const result = await g.run({ a: 0, b: 0, terminal: false }, makeCtx());

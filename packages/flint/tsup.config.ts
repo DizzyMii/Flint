@@ -9,6 +9,8 @@ export default defineConfig({
     'src/compress.ts',
     'src/recipes.ts',
     'src/budget.ts',
+    'src/context.ts',
+    'src/pricing.ts',
     'src/errors.ts',
     'src/testing/mock-adapter.ts',
     'src/safety/index.ts',
@@ -17,6 +19,6 @@ export default defineConfig({
   dts: true,
   clean: true,
   target: 'es2022',
-  splitting: false,
+  splitting: true,
   sourcemap: true,
 });

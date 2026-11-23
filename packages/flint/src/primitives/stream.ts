@@ -1,7 +1,9 @@
 import type { NormalizedRequest, ProviderAdapter } from '../adapter.ts';
 import type { Budget } from '../budget.ts';
 import type { Transform } from '../compress.ts';
+import { costOf } from '../pricing.ts';
 import type { Logger, Message, StreamChunk } from '../types.ts';
+import { prepareCall } from './call.ts';
 
 export type StreamOptions = Omit<NormalizedRequest, 'signal' | 'messages'> & {
   adapter: ProviderAdapter;
@@ -18,38 +20,22 @@ export async function* stream(options: StreamOptions): AsyncIterable<StreamChunk
       'stream: options.adapter, options.model, and options.messages are required',
     );
   }
+  const prepared = await prepareCall(options);
+  if (!prepared.ok) throw prepared.error;
+  const { req, pricing, hold } = prepared.value;
 
-  const ctx = {
-    ...(options.budget !== undefined ? { budget: options.budget } : {}),
-    model: options.model,
-  };
-  const messages = options.compress
-    ? await options.compress(options.messages, ctx)
-    : options.messages;
-
-  if (options.budget) {
-    options.budget.assertNotExhausted();
-  }
-
-  const req: NormalizedRequest = {
-    model: options.model,
-    messages,
-    ...(options.tools !== undefined ? { tools: options.tools } : {}),
-    ...(options.schema !== undefined ? { schema: options.schema } : {}),
-    ...(options.maxTokens !== undefined ? { maxTokens: options.maxTokens } : {}),
-    ...(options.temperature !== undefined ? { temperature: options.temperature } : {}),
-    ...(options.stopSequences !== undefined ? { stopSequences: options.stopSequences } : {}),
-    ...(options.cache !== undefined ? { cache: options.cache } : {}),
-    ...(options.signal !== undefined ? { signal: options.signal } : {}),
-  };
-
-  for await (const chunk of options.adapter.stream(req)) {
-    if (chunk.type === 'usage' && options.budget) {
-      options.budget.consume({
-        ...chunk.usage,
-        ...(chunk.cost !== undefined ? { cost: chunk.cost } : {}),
-      });
+  try {
+    for await (const chunk of options.adapter.stream(req)) {
+      if (chunk.type === 'usage') {
+        const cost = chunk.cost ?? (pricing ? costOf(chunk.usage, pricing) : undefined);
+        hold?.release();
+        options.budget?.consume({ ...chunk.usage, ...(cost !== undefined ? { cost } : {}) });
+        yield cost !== undefined ? { ...chunk, cost } : chunk;
+        continue;
+      }
+      yield chunk;
     }
-    yield chunk;
+  } finally {
+    hold?.release();
   }
 }

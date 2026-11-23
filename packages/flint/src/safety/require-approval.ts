@@ -1,5 +1,5 @@
 import { FlintError } from '../errors.ts';
-import type { Tool } from '../types.ts';
+import type { Tool, ToolContext } from '../types.ts';
 
 export type ApprovalContext<Input> = {
   tool: Tool<Input>;
@@ -19,7 +19,7 @@ export function requireApproval<Input, Output>(
 ): Tool<Input, Output> {
   const timeoutMs = opts.timeout ?? 5 * 60 * 1000;
 
-  const wrappedHandler = async (input: Input): Promise<Output> => {
+  const wrappedHandler = async (input: Input, ctx: ToolContext): Promise<Output> => {
     let timeoutId: ReturnType<typeof setTimeout> | undefined;
     const approvalPromise = opts.onApprove({ tool: t, input });
     const timeoutPromise = new Promise<ApprovalResult>((resolve) => {
@@ -41,7 +41,7 @@ export function requireApproval<Input, Output>(
         );
       }
 
-      return await t.handler(input);
+      return await t.handler(input, ctx);
     } finally {
       if (timeoutId !== undefined) {
         clearTimeout(timeoutId);

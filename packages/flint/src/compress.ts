@@ -1,4 +1,5 @@
 import type { ProviderAdapter } from './adapter.ts';
+import { toTurns } from './transcript.ts';
 import type { Message } from './types.ts';
 
 export type CompressCtx = {
@@ -23,7 +24,12 @@ export function dedup(): Transform {
     const seen = new Set<string>();
     const result: Message[] = [];
     for (const msg of messages) {
-      if (msg.role === 'system') {
+      // Tool results and tool-calling turns are bound to call ids; dropping one orphans its pair.
+      if (
+        msg.role === 'system' ||
+        msg.role === 'tool' ||
+        (msg.role === 'assistant' && msg.toolCalls?.length)
+      ) {
         result.push(msg);
         continue;
       }
@@ -77,22 +83,26 @@ function applyWindow(
   alwaysKeepRoles: Array<Message['role']>,
   take: 'first' | 'last',
 ): Message[] {
-  // Partition with original indices
-  const kept: Array<{ index: number; msg: Message }> = [];
-  const eligible: Array<{ index: number; msg: Message }> = [];
-  messages.forEach((msg, index) => {
-    if (alwaysKeepRoles.includes(msg.role)) {
-      kept.push({ index, msg });
-    } else {
-      eligible.push({ index, msg });
-    }
-  });
-
-  const taken =
-    take === 'last' ? eligible.slice(Math.max(0, eligible.length - keep)) : eligible.slice(0, keep);
-
-  const merged = [...kept, ...taken].sort((a, b) => a.index - b.index);
-  return merged.map((x) => x.msg);
+  const pinned = (m: Message) => alwaysKeepRoles.includes(m.role);
+  const turns = toTurns(messages);
+  const eligible = turns.filter(
+    (t) => !(t.messages.length === 1 && pinned(t.messages[0] as Message)),
+  );
+  const ordered = take === 'last' ? [...eligible].reverse() : eligible;
+  const chosen = new Set<number>();
+  let budget = keep;
+  for (const turn of ordered) {
+    const size = turn.messages.filter((m) => !pinned(m)).length;
+    if (size > budget) break;
+    budget -= size;
+    chosen.add(turn.start);
+  }
+  const out: Message[] = [];
+  for (const turn of turns) {
+    if (chosen.has(turn.start)) out.push(...turn.messages);
+    else out.push(...turn.messages.filter(pinned).filter(() => turn.messages.length === 1));
+  }
+  return out;
 }
 
 export function windowLast(opts: WindowOpts): Transform {
@@ -126,8 +136,14 @@ export function summarize(opts: SummarizeOpts): Transform {
     if (!opts.when(messages)) return messages;
     if (messages.length < keepLast + 2) return messages;
 
-    const toSummarize = messages.slice(0, messages.length - keepLast);
-    const toKeep = messages.slice(messages.length - keepLast);
+    // Move the cut back to a turn boundary so no tool result is separated from its call.
+    let cut = messages.length - keepLast;
+    for (const turn of toTurns(messages)) {
+      if (turn.start < cut && turn.start + turn.messages.length > cut) cut = turn.start;
+    }
+    if (cut <= 0) return messages;
+    const toSummarize = messages.slice(0, cut);
+    const toKeep = messages.slice(cut);
 
     let summary: string;
     try {
