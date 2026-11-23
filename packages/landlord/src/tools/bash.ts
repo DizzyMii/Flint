@@ -19,8 +19,13 @@ export function bashTool(workDir: string): Tool {
       properties: { command: { type: 'string' } },
       required: ['command'],
     },
-    handler: async ({ command }) => {
-      const { stdout, stderr } = await execAsync(command, { cwd: workDir });
+    handler: async ({ command }, ctx) => {
+      const { stdout, stderr } = await execAsync(command, {
+        cwd: workDir,
+        signal: ctx.signal,
+        timeout: 120_000,
+        maxBuffer: 10 * 1024 * 1024,
+      });
       const combined = [stdout, stderr].filter(Boolean).join('\n');
       return combined || '(no output)';
     },

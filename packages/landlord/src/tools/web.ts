@@ -10,8 +10,8 @@ export function webFetchTool(_workDir: string): Tool {
     description: 'Fetch a URL and return the response body as text.',
     input: webSchema,
     jsonSchema: { type: 'object', properties: { url: { type: 'string' } }, required: ['url'] },
-    handler: async ({ url }) => {
-      const response = await fetch(url);
+    handler: async ({ url }, ctx) => {
+      const response = await fetch(url, { signal: ctx.signal });
       if (!response.ok) {
         throw new Error(`HTTP ${response.status}: ${await response.text()}`);
       }

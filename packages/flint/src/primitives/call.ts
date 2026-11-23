@@ -413,30 +413,35 @@ export async function* callStream<T = unknown>(
   const prepared = await prepareCall(options);
   if (!prepared.ok) return prepared;
 
-  for (let attempt = 0; ; attempt++) {
-    const acc = assembleStream();
-    let emitted = false;
-    try {
-      for await (const chunk of options.adapter.stream(prepared.value.req)) {
-        acc.push(chunk);
-        emitted = true;
-        yield chunk;
-      }
-      return await finish(options, prepared.value, acc.response());
-    } catch (e) {
-      const err = toAdapterError(e);
-      const delay = emitted ? undefined : nextRetry(err, attempt, options);
-      if (delay === undefined) {
-        prepared.value.hold?.release();
-        return fail(err);
-      }
-      options.onRetry?.({ attempt: attempt + 1, error: err, delayMs: delay });
+  try {
+    for (let attempt = 0; ; attempt++) {
+      const acc = assembleStream();
+      let emitted = false;
       try {
-        await sleep(delay, options.signal);
-      } catch {
-        prepared.value.hold?.release();
-        return fail(err);
+        for await (const chunk of options.adapter.stream(prepared.value.req)) {
+          acc.push(chunk);
+          emitted = true;
+          yield chunk;
+        }
+        return await finish(options, prepared.value, acc.response());
+      } catch (e) {
+        const err = toAdapterError(e);
+        const delay = emitted ? undefined : nextRetry(err, attempt, options);
+        if (delay === undefined) {
+          prepared.value.hold?.release();
+          return fail(err);
+        }
+        options.onRetry?.({ attempt: attempt + 1, error: err, delayMs: delay });
+        try {
+          await sleep(delay, options.signal);
+        } catch {
+          prepared.value.hold?.release();
+          return fail(err);
+        }
       }
     }
+  } finally {
+    // Releases the hold if the consumer stops iterating early; release() is idempotent.
+    prepared.value.hold?.release();
   }
 }

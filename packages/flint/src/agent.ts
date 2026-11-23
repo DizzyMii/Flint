@@ -299,6 +299,8 @@ export async function* agentStream(
     }
 
     const { message, stopReason } = result.value;
+    // Snapshot now: when nothing transforms the prompt, `sent` is the live transcript array.
+    const messagesSent = [...(result.value.sent ?? [])];
     usage = addUsage(usage, result.value.usage);
     cost += result.value.cost ?? 0;
     yield emit({
@@ -341,7 +343,7 @@ export async function* agentStream(
     }
 
     const s: Step = {
-      messagesSent: result.value.sent ?? [],
+      messagesSent,
       assistant: message,
       toolCalls,
       toolResults,

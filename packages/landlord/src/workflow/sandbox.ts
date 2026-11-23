@@ -1,5 +1,13 @@
 import { WorkflowError } from './errors.ts';
 
+/*
+ * Determinism guard, NOT a security boundary. Shadowing these names stops accidental
+ * nondeterminism (Date, Math.random) so journaled runs replay identically. Script code still runs
+ * in the host realm: `(async () => {}).constructor('return process')()` reaches the host. Run only
+ * workflow scripts you would run as ordinary code; for untrusted scripts use a process or
+ * isolate boundary (worker with restricted permissions, container, isolated-vm).
+ */
+
 function forbidden(name: string): never {
   throw new WorkflowError(
     `${name} is not available inside a workflow script (nondeterministic or host access)`,

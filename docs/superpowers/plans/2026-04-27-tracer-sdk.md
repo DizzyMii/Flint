@@ -1,5 +1,7 @@
 # Tracer SDK Implementation Plan
 
+> **Status: Superseded (2026-11).** Tracing is now the agent event log in `flint` (`agentStream()`, `onEvent`, `eventLog()`); any trace backend is a sink over those events. A hosted ingestion platform is out of scope for a runtime library and is not planned. Kept for historical context only.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Build `@tracer/sdk` — a TypeScript SDK that wraps OTel's `BatchSpanProcessor` with a custom HTTP exporter, giving developers a single `createTracer()` call that auto-instruments Vercel AI SDK.

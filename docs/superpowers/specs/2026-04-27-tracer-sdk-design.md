@@ -1,5 +1,7 @@
 # Tracer SDK Design
 
+> **Status: Superseded (2026-11).** Tracing is now the agent event log in `flint` (`agentStream()`, `onEvent`, `eventLog()`); any trace backend is a sink over those events. A hosted ingestion platform is out of scope for a runtime library and is not planned. Kept for historical context only.
+
 **Sub-project:** `@tracer/sdk` — TypeScript instrumentation SDK for the Tracer platform  
 **Repo:** `tracer` monorepo (`packages/sdk/`)  
 **Date:** 2026-04-27

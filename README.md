@@ -41,7 +41,7 @@ const adapter = anthropicAdapter({ apiKey: process.env.ANTHROPIC_API_KEY! });
 // One-shot call — errors come back as values, nothing throws
 const res = await call({
   adapter,
-  model: 'claude-opus-4-7',
+  model: 'claude-opus-5-5',
   messages: [{ role: 'user', content: 'What is the capital of France?' }],
 });
 if (res.ok) console.log(res.value.message.content); // "Paris"
@@ -57,20 +57,36 @@ const add = tool({
 // Agent loop with enforced step / token / dollar caps
 const out = await agent({
   adapter,
-  model: 'claude-opus-4-7',
+  model: 'claude-opus-5-5',
   messages: [{ role: 'user', content: 'What is 123 + 456?' }],
   tools: [add],
-  budget: budget({ maxSteps: 5, maxDollars: 0.10 }),
+  budget: budget({ maxSteps: 5, maxDollars: 0.10 }), // enforced before each call, not after
 });
 if (out.ok) console.log(out.value.message.content); // "579"
 ```
+
+## Why it is cheaper
+
+On a scripted 30-step tool-using run against a simulator of Anthropic's prompt-cache billing (`packages/adapter-anthropic/test/bench.test.ts`, a CI gate):
+
+| Layout | $/task |
+|---|---|
+| No caching | $3.08 |
+| System + tools cached (typical) | $2.56 |
+| **Flint rolling breakpoints** | **$0.45** |
+
+Flint keeps every request's prefix byte-stable and places cache breakpoints so each step reads the whole history from cache. Compaction is a cost decision (`compactionDecision`), not a reflex: with caching on, re-reading history is usually cheaper than summarizing it.
 
 ## What you get
 
 **Core (`flint`)** — 1 runtime dependency (`@standard-schema/spec`)
 
 - 6 primitives: `call`, `stream`, `validate`, `tool`, `execute`, `count`
-- `agent()` loop with step / token / dollar budget caps
+- `agent()` loop built on an event log (`agentStream`, `onEvent`) — stream it, trace it, resume it after a crash
+- budgets enforced before each call: `max_tokens` is clamped to what is left, dollar limits fail closed if a model cannot be priced
+- classified provider errors with automatic retries (rate limits, overload, retry-after)
+- cost-aware, prefix-stable `contextManager()` for long runs
+- record/replay cassettes for deterministic agent tests
 - compress transforms + `pipeline()`: `dedup`, `windowLast`, `windowFirst`, `truncateToolResults`, `summarize`, `orderForCache`
 - recipes: `react`, `retryValidate`, `reflect`, `summarize`
 - RAG (chunk, store, retrieve), conversation memory with async summarization
@@ -83,8 +99,8 @@ if (out.ok) console.log(out.value.message.content); // "579"
 | `flint` | Core primitives, agent loop, compress, memory, RAG, safety, recipes |
 | `@flint/adapter-anthropic` | Anthropic Messages API — prompt-cache aware |
 | `@flint/adapter-openai-compat` | Any OpenAI-compatible endpoint (OpenAI, Groq, Ollama, DeepSeek, Together) |
-| `@flint/graph` | State-machine agent workflows with memory checkpointing |
-| `@flint/landlord` | Multi-agent orchestration — dynamic workflow runtime and auto-decompose `orchestrate()` |
+| `@flint/graph` | *Experimental.* State-machine workflows with fan-out/join and checkpoint resume |
+| `landlord` | *Experimental.* Multi-agent orchestration — dynamic workflow runtime and auto-decompose `orchestrate()` |
 
 Adapters and graph each ship with zero runtime dependencies, on Web API primitives only (`fetch`, `ReadableStream`, `TextDecoder`).
 
@@ -93,9 +109,9 @@ Adapters and graph each ship with zero runtime dependencies, on Web API primitiv
 - **One dependency** — `@standard-schema/spec` only. No transitive framework sprawl.
 - **No classes, no chains** — plain functions that compose naturally.
 - **Standard Schema** — bring Zod, Valibot, ArkType, or any compatible library.
-- **Budget-aware** — every agent loop enforces step, token, and dollar limits.
-- **Streaming first** — `AsyncIterable<StreamChunk>` throughout.
-- **Safety in core** — injection detection, redaction, and approval gates, not an afterthought.
+- **Budget-aware** — step, token, and dollar limits enforced before each call, with reservations for concurrent agents.
+- **Streaming first** — `AsyncIterable<StreamChunk>` throughout, including the agent loop.
+- **Safety in core** — injection detection, redaction, approval gates, abortable tools, and transcripts that are checked before they are sent.
 - **Results, not exceptions** — `Promise<Result<T>>` everywhere; no try/catch at the call site.
 
 Coming from LangChain? See the [Flint vs LangChain](https://dizzymii.github.io/Flint/guide/vs-langchain) guide for a full side-by-side.

@@ -1,7 +1,9 @@
 # Tracer — Platform + Ingestion Sub-Project Design
 
+> **Status: Superseded (2026-11).** Tracing is now the agent event log in `flint` (`agentStream()`, `onEvent`, `eventLog()`); any trace backend is a sink over those events. A hosted ingestion platform is out of scope for a runtime library and is not planned. Kept for historical context only.
+
 **Date:** 2026-04-27  
-**Status:** Approved  
+**Status:** Superseded  
 **Sub-project:** 1 of N — Platform + Ingestion (data plane + minimal control plane)  
 **Product:** Tracer — eval-first AI observability API for TypeScript developers  
 **Scope boundary:** Traces flowing end-to-end into ClickHouse, API key management via REST. No Clerk, no Stripe, no dashboard, no SDK package.

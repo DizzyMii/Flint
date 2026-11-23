@@ -1,5 +1,5 @@
 // src/workflow/agentcall.ts
-import { agent } from 'flint';
+import { agent, partialRun } from 'flint';
 import type { ProviderAdapter } from 'flint';
 import type { Budget } from 'flint/budget';
 import { standardTools } from '../tools/index.ts';
@@ -105,7 +105,11 @@ export async function runAgentCall(
         budget: deps.flintBudget,
         ...(deps.signal !== undefined ? { signal: deps.signal } : {}),
       });
-      if (!out.ok) throw out.error;
+      if (!out.ok) {
+        const spent = partialRun(out.error)?.usage;
+        if (spent) deps.wfBudget.record(spent);
+        throw out.error;
+      }
       deps.wfBudget.record(out.value.usage);
       tokens = out.value.usage.input + out.value.usage.output;
       const value = so.getValue();
@@ -128,7 +132,11 @@ export async function runAgentCall(
         budget: deps.flintBudget,
         ...(deps.signal !== undefined ? { signal: deps.signal } : {}),
       });
-      if (!out.ok) throw out.error;
+      if (!out.ok) {
+        const spent = partialRun(out.error)?.usage;
+        if (spent) deps.wfBudget.record(spent);
+        throw out.error;
+      }
       deps.wfBudget.record(out.value.usage);
       tokens = out.value.usage.input + out.value.usage.output;
       result = out.value.message.content;
