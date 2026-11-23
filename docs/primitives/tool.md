@@ -2,45 +2,50 @@
 
 Define a typed tool that an LLM can call.
 
-`tool()` is an identity helper that infers types from your schema. It accepts a `Tool` spec and returns it unchanged — the value is in TypeScript inference.
+`tool()` infers types from your schema and returns a `Tool`. The value is in TypeScript inference — at runtime it copies the spec.
 
 ## Signature
 
 ```ts
-function tool<Input, Output>(spec: Tool<Input, Output>): Tool<Input, Output>
+function tool<Input, Output>(spec: ToolSpec<Input, Output>): Tool<Input, Output>
 ```
 
-## Tool spec
+## ToolSpec
 
 ```ts
-type Tool<Input = unknown, Output = unknown> = {
+type ToolSpec<Input, Output> = {
   name: string;
   description: string;
   input: StandardSchemaV1<unknown, Input>;
-  handler: (input: Input) => Promise<Output> | Output;
+  handler: (input: Input, ctx: ToolContext) => Promise<Output> | Output;
   permissions?: ToolPermissions;
   timeout?: number;
   jsonSchema?: Record<string, unknown>;
+  sequential?: boolean;
 };
 
-type ToolPermissions = {
-  destructive?: boolean;
-  scopes?: string[];
-  network?: boolean;
-  filesystem?: boolean;
-  requireApproval?: boolean;
+type ToolContext = {
+  /** Aborted when the tool times out or the surrounding run is cancelled. */
+  signal: AbortSignal;
+  toolCallId?: string;
+  step?: number;
 };
 ```
 
 | Field | Type | Required | Description |
 |---|---|---|---|
-| `name` | `string` | Yes | Tool name (sent to the model) |
-| `description` | `string` | Yes | What the tool does (sent to the model) |
-| `input` | `StandardSchemaV1` | Yes | Validates and types the model's arguments |
-| `handler` | `(input) => Output` | Yes | Executes the tool; may be async |
-| `permissions` | `ToolPermissions` | No | Used by safety utilities |
-| `timeout` | `number` | No | Milliseconds before handler is aborted |
-| `jsonSchema` | `Record<string, unknown>` | No | Override JSON Schema sent to adapter (advanced) |
+| `name` | `string` | Yes | Tool name sent to the model. Use snake_case. Must be unique among the tools of one `agent()` step — duplicates throw `TypeError`. |
+| `description` | `string` | Yes | Tells the model when and how to use the tool |
+| `input` | `StandardSchemaV1` | Yes | Validates and types the model's arguments — Zod, Valibot, ArkType, or any Standard Schema library |
+| `handler` | `(input, ctx) => Output` | Yes | The implementation. Receives validated input and a `ToolContext`. May be async. |
+| `jsonSchema` | `object` | Recommended | The JSON Schema the provider shows the model. See below. |
+| `permissions` | `ToolPermissions` | No | Metadata for the safety utilities; `destructive` also makes the tool sequential |
+| `timeout` | `number` | No | Milliseconds before the call fails with `TimeoutError` and `ctx.signal` aborts |
+| `sequential` | `boolean` | No | Run alone: a turn containing this tool runs its whole batch in order. Defaults to `permissions.destructive`. |
+
+::: warning Always provide jsonSchema
+Flint validates arguments with `input`, but does not convert it to JSON Schema. The first-party adapters send `jsonSchema` to the provider and fall back to a bare `{ "type": "object" }` when it is missing, which leaves the model guessing the argument names.
+:::
 
 ## Example
 
@@ -55,101 +60,88 @@ const weatherTool = tool({
     location: v.string(),
     unit: v.optional(v.picklist(['celsius', 'fahrenheit']), 'celsius'),
   }),
-  handler: async ({ location, unit }) => {
-    // fetch real weather here
-    return { location, temperature: 22, unit };
+  jsonSchema: {
+    type: 'object',
+    properties: {
+      location: { type: 'string' },
+      unit: { type: 'string', enum: ['celsius', 'fahrenheit'] },
+    },
+    required: ['location'],
   },
+  handler: async ({ location, unit }, { signal }) => {
+    const res = await fetch(`https://weather.example/api?q=${encodeURIComponent(location)}`, { signal });
+    const { temperature } = (await res.json()) as { temperature: number };
+    return { location, temperature, unit };
+  },
+  timeout: 10_000,
 });
 ```
 
-## ToolSpec reference
+## The handler context
+
+The second argument gives the handler what it needs to cooperate with the run:
+
+- **`signal`** fires when the tool's `timeout` elapses or when the caller's signal (for example `agent({ signal })`) aborts. Pass it to `fetch`, child processes, database drivers — anything cancellable — so work actually stops instead of running on after its result was discarded.
+- **`toolCallId`** is the provider's id for this call (set by `agent()`).
+- **`step`** is the 0-based agent step (set by `agent()`).
+
+When the signal fires, `execute()` stops waiting for the handler and returns `TimeoutError` (`tool.timeout`) or `ToolError` (`tool.aborted`) immediately; a handler that ignores the signal keeps running in the background.
+
+## Parallel vs sequential execution
+
+When the model asks for several tools in one turn, `agent()` runs them **concurrently** by default. If any tool in the batch is sequential — `sequential: true`, or `permissions.destructive: true` without an explicit `sequential` — the **whole batch** runs one at a time, in the order the model listed them.
 
 ```ts
-type ToolSpec<Input, Output> = {
-  name: string;
-  description: string;
-  input: StandardSchemaV1<unknown, Input>;
-  handler: (input: Input) => Promise<Output> | Output;
-  permissions?: ToolPermissions;
-  timeout?: number;
-  jsonSchema?: Record<string, unknown>;
-};
-```
+const writeFile = tool({
+  name: 'write_file',
+  description: 'Write a file',
+  input: v.object({ path: v.string(), content: v.string() }),
+  jsonSchema: { /* … */ },
+  permissions: { destructive: true, filesystem: true }, // implies sequential
+  handler: async ({ path, content }) => { /* … */ },
+});
 
-| Field | Type | Description |
-|-------|------|-------------|
-| `name` | `string` | Tool name sent to the LLM. Use snake_case. Must be unique within a call. |
-| `description` | `string` | Explains to the LLM when and how to use the tool |
-| `input` | `StandardSchemaV1` | Input schema — Zod, Valibot, ArkType, or any Standard Schema library |
-| `handler` | `function` | The implementation. Receives typed, validated input. |
-| `permissions` | `ToolPermissions` | Optional permission metadata for `requireApproval()` and `permissionedTools()` |
-| `timeout` | `number` | Milliseconds before `TimeoutError`. Undefined = no timeout. |
-| `jsonSchema` | `Record<string, unknown>` | Override the JSON Schema sent to the provider. Use when your schema library's output needs adjustment. |
+const readOnlyButOrdered = tool({
+  /* … */
+  sequential: true, // order matters even though it is not destructive
+});
+```
 
 ## ToolPermissions
 
 ```ts
 type ToolPermissions = {
-  destructive?: boolean;   // true if the tool modifies state irreversibly
-  scopes?: string[];       // custom permission scope strings
-  network?: boolean;       // true if the tool makes network requests
-  filesystem?: boolean;    // true if the tool accesses the filesystem
+  destructive?: boolean;     // modifies state irreversibly; also makes the tool sequential
+  scopes?: string[];         // custom permission scope strings
+  network?: boolean;         // makes network requests
+  filesystem?: boolean;      // accesses the filesystem
   requireApproval?: boolean; // always require human approval
 };
 ```
 
-Permissions are metadata only — they don't restrict execution unless you use `requireApproval()` or `permissionedTools()` from the safety module.
+Apart from `destructive` implying `sequential`, permissions are metadata only — they don't restrict execution unless you use `requireApproval()` or `permissionedTools()` from the [safety module](/features/safety).
 
 ## Handler return types
 
-The handler can return any serializable value. The agent loop serializes it to a tool result message:
+The handler can return any serializable value. `agent()` turns it into a tool result message:
 
 ```ts
-// Returning a string — used as-is
-handler: () => 'success'
-
-// Returning an object — JSON.stringify'd
-handler: () => ({ count: 42, items: ['a', 'b'] })
-
-// Returning a number
+handler: () => 'success'                       // strings are used as-is
+handler: () => ({ count: 42, items: ['a'] })   // anything else is JSON.stringify'd
 handler: ({ a, b }) => a + b
-
-// Async handler
-handler: async ({ url }) => {
-  const res = await fetch(url);
-  return res.text();
-}
 ```
 
-## jsonSchema override
-
-When your schema library generates JSON Schema that the LLM misinterprets, override with `jsonSchema`:
-
-```ts
-const myTool = tool({
-  name: 'search',
-  description: 'Search for items',
-  input: v.object({ query: v.string(), limit: v.optional(v.number()) }),
-  handler: search,
-  jsonSchema: {
-    type: 'object',
-    properties: {
-      query: { type: 'string', description: 'The search query' },
-      limit: { type: 'number', description: 'Max results (default 10)', default: 10 },
-    },
-    required: ['query'],
-  },
-});
-```
+If the handler throws, times out, or its input fails validation, `agent()` sends the model a tool result with `isError: true` and content `Error: …` (including schema issue paths for validation failures), and the loop continues.
 
 ## Common mistakes
 
 ::: warning Tool names must match across calls
-The LLM sends back the tool name exactly as you defined it. If you change a tool name between steps in a multi-turn conversation, the agent won't find the tool.
+The model sends back the tool name exactly as you defined it. If you rename a tool between steps in a multi-turn conversation, the agent won't find it and answers with an "unknown tool" error result.
 :::
 
 ## See also
 
 - [execute()](/primitives/execute) — run tool handlers directly
+- [agent()](/primitives/agent) — how tool batches are scheduled
 - [Safety](/features/safety) — requireApproval, permissionedTools
 - [Error Types](/reference/errors) — ToolError, TimeoutError

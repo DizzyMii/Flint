@@ -43,8 +43,20 @@ type MockAdapterOptions = {
   onCall: (req: NormalizedRequest, callIndex: number) => NormalizedResponse | Promise<NormalizedResponse>;
   onStream?: (req: NormalizedRequest, callIndex: number) => AsyncIterable<StreamChunk>;
   count?: (messages: Message[], model: string) => number;
+  pricing?: (model: string) => ModelPricing | undefined;
 };
 ```
+
+Pass `pricing` to test dollar budgets: Flint computes `cost` from it and uses it for the pre-flight dollar clamp. Without it, a budget with `maxDollars` fails with `budget.unpriced`.
+
+```ts
+const adapter = mockAdapter({
+  onCall: () => ({ message: { role: 'assistant', content: 'ok' }, usage: { input: 10, output: 5 }, stopReason: 'end' }),
+  pricing: () => ({ input: 4, output: 20 }), // USD per million tokens
+});
+```
+
+Set `capabilities: { defaultMaxTokens: 16000 }` to reproduce an adapter's default output cap; budget pre-flight clamps it and the clamped value shows up as `adapter.calls[i].maxTokens`.
 
 ### Inspecting calls
 
@@ -67,7 +79,7 @@ describe('call()', () => {
 
     await call({
       adapter,
-      model: 'claude-opus-4-7',
+      model: 'claude-opus-5-5',
       messages: [{ role: 'user', content: 'Capital of France?' }],
     });
 
@@ -76,7 +88,7 @@ describe('call()', () => {
       role: 'user',
       content: 'Capital of France?',
     });
-    expect(adapter.calls[0].model).toBe('claude-opus-4-7');
+    expect(adapter.calls[0].model).toBe('claude-opus-5-5');
   });
 });
 ```
@@ -188,7 +200,7 @@ describe('agent()', () => {
 
     const res = await agent({
       adapter,
-      model: 'claude-opus-4-7',
+      model: 'claude-opus-5-5',
       messages: [{ role: 'user', content: 'What is 5 + 3?' }],
       tools: [add],
       budget: budget({ maxSteps: 5 }),
@@ -203,6 +215,81 @@ describe('agent()', () => {
   });
 });
 ```
+
+## Record / replay cassettes
+
+Scripted responses are hand-written. For regression tests against real model output, record a run once with the real adapter and replay it offline.
+
+```ts
+import {
+  recordingAdapter,
+  replayAdapter,
+  requestKey,
+  type Cassette,
+} from 'flint/testing';
+```
+
+| Export | Description |
+|---|---|
+| `recordingAdapter(inner, cassette?)` | Wraps a real adapter. Every `call()` response is stored in `.cassette` under the request's key. |
+| `replayAdapter(cassette, opts?)` | A `MockAdapter` that answers from the cassette. A request it has not seen fails with `FlintError` code **`testing.cassette_miss`**. `opts` takes `name`, `capabilities` and `pricing`. |
+| `requestKey(req)` | Fingerprint of everything that determines a response: model, messages, tool names/descriptions/`jsonSchema`, `jsonSchema`, temperature, stop sequences and `extra`. Signals, Standard Schemas and handlers are ignored. |
+| `Cassette` | `Record<string, NormalizedResponse[]>` — plain JSON, commit it next to the test. |
+
+Identical requests are answered in recorded order, so a run that sends the same prompt twice replays both responses. `raw` provider payloads are not stored.
+
+### Recording
+
+```ts
+// scripts/record-research.ts — run manually with a real key
+import { writeFile } from 'node:fs/promises';
+import { agent } from 'flint';
+import { budget } from 'flint/budget';
+import { recordingAdapter } from 'flint/testing';
+import { anthropicAdapter } from '@flint/adapter-anthropic';
+
+const rec = recordingAdapter(anthropicAdapter({ apiKey: process.env.ANTHROPIC_API_KEY! }));
+
+await agent({
+  adapter: rec,
+  model: 'claude-opus-5-5',
+  messages: [{ role: 'user', content: 'Summarize quantum computing' }],
+  tools: [search, read],
+  budget: budget({ maxSteps: 10 }),
+});
+
+await writeFile('test/cassettes/research.json', JSON.stringify(rec.cassette, null, 2));
+```
+
+### Replaying
+
+```ts
+import { readFile } from 'node:fs/promises';
+import { agent } from 'flint';
+import { budget } from 'flint/budget';
+import { anthropicPricing } from '@flint/adapter-anthropic';
+import { lookupPricing } from 'flint';
+import { replayAdapter, type Cassette } from 'flint/testing';
+import { it, expect } from 'vitest';
+
+it('research agent still behaves', async () => {
+  const cassette = JSON.parse(await readFile('test/cassettes/research.json', 'utf8')) as Cassette;
+  const res = await agent({
+    adapter: replayAdapter(cassette, { pricing: (m) => lookupPricing(anthropicPricing, m) }),
+    model: 'claude-opus-5-5',
+    messages: [{ role: 'user', content: 'Summarize quantum computing' }],
+    tools: [search, read],
+    budget: budget({ maxSteps: 10 }),
+  });
+  expect(res.ok).toBe(true);
+});
+```
+
+If you change the prompt, a tool description or a tool's `jsonSchema`, the request key changes and replay fails with `testing.cassette_miss` instead of silently returning stale output — re-record the cassette. Inside `agent()` the miss surfaces as an `AdapterError` whose `cause` is the cassette-miss `FlintError`.
+
+::: warning Streaming is not recorded
+`recordingAdapter` records `call()` only; its `stream()` passes through to the real adapter without recording. Record and replay with `streaming` off.
+:::
 
 ## Testing tool handlers directly
 
@@ -365,7 +452,7 @@ describe('research agent integration', () => {
 
     const res = await agent({
       adapter,
-      model: 'claude-opus-4-7',
+      model: 'claude-opus-5-5',
       messages: [{ role: 'user', content: 'Summarize quantum computing' }],
       tools: [search, read],
       budget: budget({ maxSteps: 10 }),

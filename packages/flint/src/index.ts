@@ -13,7 +13,7 @@ export {
   transcriptFrom,
   usageFrom,
 } from './agent.ts';
-export { callStream, assembleStream } from './primitives/call.ts';
+export { assembleStream, callStream, overBudgetResponse } from './primitives/call.ts';
 export { checkTranscript, toTurns } from './transcript.ts';
 export { costOf, lookupPricing, worstCaseCost, affordableOutputTokens } from './pricing.ts';
 

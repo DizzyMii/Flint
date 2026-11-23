@@ -1,18 +1,24 @@
 # stream()
 
-Send a request to an LLM and receive chunks as they arrive via `AsyncIterable<StreamChunk>`.
+Send a request to an LLM and receive chunks as they arrive.
 
-`stream()` is the streaming counterpart to `call()`. It passes each chunk through as it arrives from the adapter, consuming budget on the `usage` chunk.
+Flint has two streaming primitives:
 
-## Signature
+| | `stream()` | `callStream()` |
+|---|---|---|
+| Shape | `AsyncIterable<StreamChunk>` | `AsyncGenerator<StreamChunk, Result<CallOutput>>` |
+| Errors | Thrown from the iterator | Returned as a `Result` |
+| Retries | No | Yes, but only before the first chunk |
+| Schema validation | No | Yes (`schema`, like `call()`) |
+| Final message | Assemble it yourself | Returned in `CallOutput` |
+
+Both run the same budget pre-flight as [`call()`](/primitives/call): `max_tokens` is clamped to what the budget can pay for, a reservation is held while streaming, and a prompt that alone exceeds the budget is refused before the provider is contacted.
+
+## stream()
 
 ```ts
 function stream(options: StreamOptions): AsyncIterable<StreamChunk>
-```
 
-## StreamOptions
-
-```ts
 type StreamOptions = {
   // Required
   adapter: ProviderAdapter;
@@ -20,42 +26,23 @@ type StreamOptions = {
   messages: Message[];
 
   // Optional
-  budget?: Budget;
-  compress?: Transform;
   tools?: Tool[];
+  jsonSchema?: Record<string, unknown>;
   maxTokens?: number;
   temperature?: number;
   stopSequences?: string[];
   cache?: 'auto' | 'off';
+  extra?: Record<string, unknown>;
+  budget?: Budget;
+  compress?: Transform;
   logger?: Logger;
   signal?: AbortSignal;
 };
 ```
 
-Same options as `call()` except `schema` is not available (parse the assembled text yourself after streaming).
+Throws `TypeError` if `adapter`, `model` or `messages` is missing. Pre-flight failures (`BudgetExhausted`, `compress.malformed`) and adapter errors are thrown from the iterator — use `try`/`catch`.
 
-## StreamChunk
-
-```ts
-type StreamChunk =
-  | { type: 'text';     delta: string }
-  | { type: 'tool_call'; call: ToolCall }
-  | { type: 'usage';    usage: Usage; cost?: number }
-  | { type: 'end';      reason: StopReason };
-```
-
-| Chunk type | When it appears | What to do |
-|---|---|---|
-| `text` | As text tokens arrive | Append `delta` to your buffer |
-| `tool_call` | When the model calls a tool | Queue the call for execution |
-| `usage` | Once, at end of response | Update budget, log telemetry |
-| `end` | Final chunk | Check `reason` — `'end'`, `'tool_call'`, `'max_tokens'`, `'stop_sequence'` |
-
-## Return value
-
-`AsyncIterable<StreamChunk>` — iterate with `for await`. Throws `TypeError` if required options are missing.
-
-## Example
+### Example
 
 ```ts
 import { stream } from 'flint';
@@ -63,84 +50,103 @@ import { anthropicAdapter } from '@flint/adapter-anthropic';
 
 const adapter = anthropicAdapter({ apiKey: process.env.ANTHROPIC_API_KEY! });
 
-let text = '';
-
 for await (const chunk of stream({
   adapter,
-  model: 'claude-opus-4-7',
+  model: 'claude-opus-5-5',
   messages: [{ role: 'user', content: 'Write a haiku about TypeScript.' }],
 })) {
-  if (chunk.type === 'text') {
-    process.stdout.write(chunk.delta);
-    text += chunk.delta;
-  }
-  if (chunk.type === 'usage') {
-    console.log('\nTokens:', chunk.usage);
-  }
+  if (chunk.type === 'text') process.stdout.write(chunk.delta);
+  if (chunk.type === 'usage') console.log('\nTokens:', chunk.usage, 'cost:', chunk.cost);
 }
 ```
 
-## StreamOptions reference
+### Budget consumption
+
+When the `usage` chunk arrives, `stream()` releases the reservation, computes `cost` (from the chunk, or from `adapter.pricing(model)`), charges the budget, and yields the chunk with `cost` filled in. If that charge exceeds a limit, the iterator throws `BudgetExhausted`.
 
 ```ts
-type StreamOptions = {
-  // Required
-  adapter: ProviderAdapter;
-  model: string;
-  messages: Message[];
+import { BudgetExhausted } from 'flint/errors';
 
-  // Same optional fields as CallOptions
-  tools?: Tool[];
-  schema?: StandardSchemaV1;
-  maxTokens?: number;
-  temperature?: number;
-  stopSequences?: string[];
-  cache?: CacheControl;
-  budget?: Budget;
-  compress?: Transform;
-  logger?: Logger;
-  signal?: AbortSignal;
-};
+const b = budget({ maxTokens: 1000 });
+try {
+  for await (const chunk of stream({ adapter, model, messages, budget: b })) {
+    if (chunk.type === 'text') process.stdout.write(chunk.delta);
+  }
+} catch (err) {
+  if (err instanceof BudgetExhausted) console.log('Token limit reached');
+}
 ```
 
-## StreamChunk variants
+`stream()` does not fail closed on unpriced `maxDollars` budgets and does not retry. Use `callStream()` when you want `call()` semantics.
+
+## callStream()
+
+```ts
+function callStream<T = unknown>(
+  options: CallOptions<T>,
+): AsyncGenerator<StreamChunk, Result<CallOutput<T>>>
+```
+
+Takes the same options as [`call()`](/primitives/call) — including `schema`, `retry`, `onRetry` and `budgetSteps` — and yields chunks as they arrive. The generator's **return value** is the same `Result<CallOutput>` that `call()` would produce.
+
+Retryable errors are retried only if they happen **before the first chunk** is yielded, so a consumer never sees duplicated output. A failure after streaming has started is returned as `{ ok: false }`.
+
+```ts
+import { callStream } from 'flint';
+import type { CallOutput, Result } from 'flint';
+
+const it = callStream({ adapter, model: 'claude-opus-5-5', messages });
+let result: Result<CallOutput> | undefined;
+while (!result) {
+  const n = await it.next();
+  if (n.done) result = n.value;
+  else if (n.value.type === 'text') process.stdout.write(n.value.delta);
+}
+
+if (result.ok) console.log('\n', result.value.usage, result.value.cost);
+```
+
+`agent({ streaming: true })` uses `callStream()` internally and re-emits each chunk as a `chunk` [event](/features/events).
+
+## StreamChunk
 
 ```ts
 type StreamChunk =
   | { type: 'text'; delta: string }
+  | { type: 'thinking'; delta: string }
   | { type: 'tool_call'; call: ToolCall }
   | { type: 'usage'; usage: Usage; cost?: number }
+  | { type: 'message'; message: AssistantMessage }
   | { type: 'end'; reason: StopReason };
 ```
 
 | Chunk type | When emitted | Key fields |
 |------------|-------------|-----------|
-| `text` | Each text token | `delta` — the new text fragment |
-| `tool_call` | When model calls a tool | `call` — `{ id, name, arguments }` |
-| `usage` | After generation completes | `usage` — `{ input, output, cached? }`, `cost?` |
-| `end` | Last chunk | `reason` — why generation stopped |
+| `text` | Each text fragment | `delta` |
+| `thinking` | Each reasoning fragment (extended thinking) | `delta` |
+| `tool_call` | When a tool call's arguments are complete | `call` — `{ id, name, arguments, parseError? }` |
+| `usage` | After generation completes | `usage` — `{ input, output, cached?, cacheWrite? }`, `cost?` |
+| `message` | Before `end`, from adapters that can supply it | `message` — the fully assembled `AssistantMessage`, including `thinking` and `providerContent` |
+| `end` | Last chunk | `reason` — `'end'`, `'tool_call'`, `'max_tokens'`, `'stop_sequence'` or `'refusal'` |
 
-## Accumulating chunks into a full response
+A `tool_call` whose streamed arguments were not valid JSON carries `parseError`; `agent()` answers it with an error result instead of running the tool.
+
+## Assembling a response
+
+`assembleStream()` folds chunks into a `NormalizedResponse`. When the adapter emits a `message` chunk, that exact message is used (so thinking signatures survive); otherwise the text and tool calls are concatenated.
 
 ```ts
-let fullText = '';
-const toolCalls: ToolCall[] = [];
-let usage: Usage = { input: 0, output: 0 };
+import { assembleStream, stream } from 'flint';
 
-for await (const chunk of stream({ adapter, model, messages })) {
-  if (chunk.type === 'text') fullText += chunk.delta;
-  if (chunk.type === 'tool_call') toolCalls.push(chunk.call);
-  if (chunk.type === 'usage') usage = chunk.usage;
-  if (chunk.type === 'end') console.log('Stop reason:', chunk.reason);
-}
+const acc = assembleStream();
+for await (const chunk of stream({ adapter, model, messages })) acc.push(chunk);
+const { message, usage, stopReason } = acc.response();
 ```
 
 ## Cancellation with AbortSignal
 
 ```ts
 const controller = new AbortController();
-
-// Cancel after 10 seconds
 const timeout = setTimeout(() => controller.abort(), 10_000);
 
 try {
@@ -152,27 +158,9 @@ try {
 }
 ```
 
-## Budget consumption
-
-Each `usage` chunk triggers `budget.consume()`. If the budget is exhausted during streaming, the generator throws `BudgetExhausted` on the next iteration.
-
-```ts
-const b = budget({ maxTokens: 1000 });
-try {
-  for await (const chunk of stream({ adapter, model, messages, budget: b })) {
-    if (chunk.type === 'text') process.stdout.write(chunk.delta);
-  }
-} catch (err) {
-  if (err instanceof BudgetExhausted) {
-    console.log('Token limit reached mid-stream');
-  }
-}
-```
-
-Note: `stream()` throws rather than returning `Result<T>` because it's an async generator. Use try/catch for error handling.
-
 ## See also
 
 - [call()](/primitives/call) — non-streaming variant
-- [Budget](/features/budget) — token limits
+- [Event log](/features/events) — `agent({ streaming: true })` emits `chunk` events
+- [Budget](/features/budget) — pre-flight and reservations
 - [Error Types](/reference/errors) — AdapterError, BudgetExhausted

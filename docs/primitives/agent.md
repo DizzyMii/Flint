@@ -1,11 +1,15 @@
 # agent()
 
-Run an agentic loop: the model reasons, calls tools, receives results, and repeats until it reaches a terminal state or a budget limit is hit.
+Run an agentic loop: the model reasons, calls tools, receives results, and repeats until it reaches a terminal response or a limit is hit.
 
-## Signature
+The loop is built as an **event stream**. `agentStream()` yields an `AgentEvent` for every state change and returns the final `Result`; `agent()` drains that stream for you. The same events drive streaming UIs, tracing, and crash recovery — see [Event log & resume](/features/events).
+
+## Signatures
 
 ```ts
 function agent(options: AgentOptions): Promise<Result<AgentOutput>>
+
+function agentStream(options: AgentOptions): AsyncGenerator<AgentEvent, Result<AgentOutput>>
 ```
 
 ## AgentOptions
@@ -18,60 +22,107 @@ type AgentOptions = {
   messages: Message[];
   budget: Budget;
 
-  // Optional
+  // Tools
   tools?: ToolsParam;
+
+  // Loop control & observation
   maxSteps?: number;
   onStep?: (step: Step) => void;
-  compress?: Transform;
-  logger?: Logger;
+  onEvent?: (event: AgentEvent) => void;
   signal?: AbortSignal;
+  logger?: Logger;
+
+  // Context
+  context?: ContextStrategy;
+  compress?: Transform;
+
+  // Passed to every call()
+  streaming?: boolean;
+  maxTokens?: number;
+  cache?: 'auto' | 'off';
+  extra?: Record<string, unknown>;
+  retry?: RetryPolicy | false;
 };
 
 type ToolsParam = Tool[] | ((ctx: ToolsCtx) => Tool[] | Promise<Tool[]>);
 type ToolsCtx = { messages: Message[]; step: number };
 ```
 
-| Option | Type | Required | Description |
+| Option | Type | Default | Description |
 |---|---|---|---|
-| `adapter` | `ProviderAdapter` | Yes | LLM provider adapter |
-| `model` | `string` | Yes | Model identifier |
-| `messages` | `Message[]` | Yes | Initial conversation history |
-| `budget` | `Budget` | **Yes** | Hard cap on steps, tokens, or dollars |
-| `tools` | `ToolsParam` | No | Available tools; can be a function for dynamic tools |
-| `maxSteps` | `number` | No | Additional step cap (budget's `maxSteps` is the primary cap) |
-| `onStep` | `(step: Step) => void` | No | Called after each completed step |
-| `compress` | `Transform` | No | Message transform applied before each call |
-| `logger` | `Logger` | No | Debug logger |
-| `signal` | `AbortSignal` | No | Cancellation signal |
+| `adapter` | `ProviderAdapter` | required | LLM provider adapter |
+| `model` | `string` | required | Model identifier |
+| `messages` | `Message[]` | required | Initial conversation history |
+| `budget` | `Budget` | required | Hard cap on steps, tokens, or dollars — checked before and charged after every call |
+| `tools` | `ToolsParam` | — | Static array, or a function called at the start of each step |
+| `maxSteps` | `number` | `Infinity` | Extra cap on tool-using iterations (the budget's `maxSteps` is usually the primary cap) |
+| `onStep` | `(step) => void` | — | Called after each completed tool-using step |
+| `onEvent` | `(event) => void` | — | Receives every [`AgentEvent`](/features/events) |
+| `signal` | `AbortSignal` | — | Cancels the in-flight request, running tools (via `ctx.signal`) and the loop |
+| `context` | `ContextStrategy` | — | Stateful context management, e.g. [`contextManager()`](/features/context). Preferred for long runs. |
+| `compress` | `Transform` | — | Stateless per-request transform (see [Compress](/features/compress)) |
+| `streaming` | `boolean` | `false` | Use the adapter's streaming endpoint and emit `chunk` events |
+| `maxTokens` | `number` | adapter default | Max output tokens per call (budget pre-flight may lower it) |
+| `cache` | `'auto' \| 'off'` | adapter default | Prompt caching mode |
+| `extra` | `object` | — | Provider body fields for every call, e.g. `{ thinking: { type: 'adaptive' } }` |
+| `retry` | `RetryPolicy \| false` | 2 retries | Retry policy for transient provider errors |
+| `logger` | `Logger` | — | Debug logger |
 
 ## AgentOutput
 
 ```ts
 type AgentOutput = {
-  message: Message & { role: 'assistant' };
-  steps: Step[];
-  usage: Usage;   // aggregated across all steps
-  cost: number;   // aggregated across all steps
+  message: AssistantMessage;  // final assistant message
+  steps: Step[];              // completed tool-using steps
+  usage: Usage;               // summed across every call, including the final one
+  cost: number;               // summed USD cost
+  messages: Message[];        // the full, uncompressed transcript including the initial messages
 };
 
 type Step = {
-  messagesSent: Message[];
-  assistant: Message & { role: 'assistant' };
+  messagesSent: Message[];    // what was actually sent, after context management and compression
+  assistant: AssistantMessage;
   toolCalls: ToolCall[];
-  toolResults: Array<Message & { role: 'tool' }>;
+  toolResults: ToolMessage[];
   usage: Usage;
   cost?: number;
 };
 ```
 
+`output.messages` is ready to be extended with a new user turn to continue the conversation. It always holds the full history, even when a context manager or `compress` sent the model something shorter.
+
 ## Return value
 
-`Promise<Result<AgentOutput>>` — never throws.
+`Promise<Result<AgentOutput>>`. Failures are returned, not thrown:
 
-Failure cases:
-- `BudgetExhausted` — any budget limit was hit
-- `AdapterError` — network or API error
-- `FlintError` with code `'agent.max_steps_exceeded'` — `maxSteps` was reached without a terminal response
+| Error | Code | When |
+|---|---|---|
+| `BudgetExhausted` | `budget.*` | A budget limit was hit (before a call, in pre-flight, or after a call) |
+| `AdapterError` | `adapter.*` | Provider failure that retries did not fix |
+| `FlintError` | `agent.max_steps_exceeded` | `maxSteps` iterations without a terminal response |
+| `FlintError` | `agent.aborted` | `signal` was aborted between steps |
+| `FlintError` | `budget.unpriced`, `compress.malformed` | See [call()](/primitives/call#return-value) |
+
+Programming errors still throw: duplicate tool names (`TypeError: agent: duplicate tool name "…"`) and missing required options.
+
+### Partial runs
+
+A failed run keeps what it achieved. `partialRun(error)` returns the steps, transcript, usage and cost up to the failure:
+
+```ts
+import { agent, partialRun } from 'flint';
+
+const res = await agent({ ... });
+if (!res.ok) {
+  const partial = partialRun(res.error);
+  console.log(`failed after ${partial?.steps.length} steps, $${partial?.cost.toFixed(4)}`);
+  // partial.messages can seed a retry with a bigger budget
+}
+```
+
+```ts
+type AgentPartial = { steps: Step[]; messages: Message[]; usage: Usage; cost: number };
+```
 
 ## Example
 
@@ -87,162 +138,128 @@ const search = tool({
   name: 'search',
   description: 'Search the web',
   input: v.object({ query: v.string() }),
+  jsonSchema: {
+    type: 'object',
+    properties: { query: { type: 'string' } },
+    required: ['query'],
+  },
   handler: async ({ query }) => `Results for: ${query}`,
 });
 
 const out = await agent({
   adapter,
-  model: 'claude-opus-4-7',
+  model: 'claude-opus-5-5',
   messages: [{ role: 'user', content: 'Find the latest TypeScript release.' }],
   tools: [search],
   budget: budget({ maxSteps: 10, maxDollars: 0.50 }),
-  onStep: (step) => {
-    console.log(`Step ${step.toolCalls.length} tool calls`);
-  },
+  onStep: (step) => console.log(`step: ${step.toolCalls.map((c) => c.name).join(', ')}`),
 });
 
 if (out.ok) {
   console.log(out.value.message.content);
-  console.log(`Completed in ${out.value.steps.length} steps`);
-  console.log(`Total cost: $${out.value.cost.toFixed(4)}`);
+  console.log(`Completed in ${out.value.steps.length} steps, $${out.value.cost.toFixed(4)}`);
 }
 ```
 
-## Dynamic tools
-
-Pass a function instead of an array to supply different tools per step:
+## Streaming the loop
 
 ```ts
-const out = await agent({
-  adapter,
-  model: 'claude-opus-4-7',
-  messages,
-  tools: ({ step }) => step < 3 ? [searchTool] : [searchTool, writeTool],
-  budget: budget({ maxSteps: 6 }),
-});
+import { agentStream } from 'flint';
+
+const run = agentStream({ adapter, model: 'claude-opus-5-5', messages, tools, budget: b, streaming: true });
+
+for (;;) {
+  const n = await run.next();
+  if (n.done) {
+    const result = n.value; // Result<AgentOutput>
+    break;
+  }
+  const e = n.value;
+  if (e.type === 'chunk' && e.chunk.type === 'text') process.stdout.write(e.chunk.delta);
+  if (e.type === 'tool_start') console.log(`\n→ ${e.call.name}`);
+}
 ```
 
-## AgentOptions reference
+`for await (const e of agentStream(...))` also works if you don't need the return value. The full event catalog is on the [Event log](/features/events) page.
 
-```ts
-type AgentOptions = {
-  // Required
-  adapter: ProviderAdapter;
-  model: string;
-  messages: Message[];
-  budget: Budget;
+## How a step runs
 
-  // Tools — static array or dynamic function
-  tools?: Tool[] | ((ctx: ToolsCtx) => Tool[] | Promise<Tool[]>);
+1. If `signal` is aborted, return `agent.aborted`.
+2. Resolve `tools` (calling the function form with `{ messages, step }`); throw on duplicate names.
+3. Build the prompt: with `context`, call `context.prepare(transcript, …)` — this may emit a `compaction` event.
+4. `call()` (or `callStream()` when `streaming`) with the budget, `compress`, `retry` and pass-through options.
+5. If the provider rejects the prompt as too long (`AdapterError` kind `context_overflow`) **and** a `context` strategy is set, force a compaction and retry the step once.
+6. Append the assistant message. If it has no tool calls (or `stopReason !== 'tool_call'`), finish with `{ ok: true }`.
+7. Run the tool calls (see below), append the results, record the `Step`, call `onStep`.
 
-  // Optional
-  maxSteps?: number;
-  onStep?: (step: Step) => void;
-  compress?: Transform;
-  logger?: Logger;
-  signal?: AbortSignal;
-};
+### Tool execution
 
-type ToolsCtx = {
-  messages: Message[];  // current message history
-  step: number;         // current step index (0-based)
-};
-```
-
-| Option | Type | Default | Description |
-|--------|------|---------|-------------|
-| `adapter` | `ProviderAdapter` | required | LLM provider |
-| `model` | `string` | required | Model identifier |
-| `messages` | `Message[]` | required | Initial message history |
-| `budget` | `Budget` | required | Hard caps — enforced every step |
-| `tools` | `Tool[] \| fn` | — | Static array or function called each step |
-| `maxSteps` | `number` | `Infinity` | Hard cap on loop iterations (in addition to budget) |
-| `onStep` | `(step: Step) => void` | — | Callback after each completed step |
-| `compress` | `Transform` | — | Applied to messages before each LLM call |
-| `logger` | `Logger` | — | Receives log entries during execution |
-| `signal` | `AbortSignal` | — | Cancels on abort |
-
-## AgentOutput reference
-
-```ts
-type AgentOutput = {
-  message: Message & { role: 'assistant' };  // final assistant message
-  steps: Step[];    // all completed tool-use steps
-  usage: Usage;     // aggregated across all steps + final call
-  cost: number;     // aggregated USD cost
-};
-
-type Step = {
-  messagesSent: Message[];             // messages sent for this step
-  assistant: Message & { role: 'assistant' }; // model response
-  toolCalls: ToolCall[];               // tool calls made
-  toolResults: Array<Message & { role: 'tool' }>; // results returned
-  usage: Usage;
-  cost?: number;
-};
-```
+- Calls in one turn run **concurrently**, unless any tool in the batch is sequential (`sequential: true`, or `permissions.destructive`), in which case the whole batch runs in order.
+- Each handler gets `ctx.signal`, `ctx.toolCallId` and `ctx.step`.
+- A tool call whose arguments failed to parse (`ToolCall.parseError`) is **not run**; the model receives an error result asking it to retry with valid JSON.
+- Unknown tool names, validation failures, timeouts and handler exceptions become tool results with `isError: true` and content `Error: …`. The loop continues and the model decides what to do.
 
 ## Dynamic tools
 
-Pass a function to load different tools per step based on conversation state:
+Pass a function to supply different tools per step:
 
 ```ts
 const res = await agent({
   ...
   tools: async ({ messages, step }) => {
-    if (step === 0) return [searchTool]; // only search on first step
-    return [searchTool, writeTool];      // add write tool after first search
+    if (step === 0) return [searchTool];
+    return [searchTool, writeTool];
   },
 });
 ```
 
-## onStep callback
+## Long runs: context and caching
 
-Use `onStep` for progress reporting without modifying the agent loop:
+Every step re-sends the whole transcript. With the Anthropic adapter's default caching, the history is read from cache at a tenth of the input price, which is usually the cheapest option. When the transcript approaches the model's window, add a context manager:
 
 ```ts
-const res = await agent({
-  ...
-  onStep: (step) => {
-    const toolNames = step.toolCalls.map(tc => tc.name).join(', ');
-    console.log(`Step ${step.toolCalls.length > 0 ? toolNames : 'final'}: ${step.usage.output} tokens`);
-  },
+import { contextManager } from 'flint/context';
+import { anthropicPricing } from '@flint/adapter-anthropic';
+
+const out = await agent({
+  adapter,
+  model: 'claude-opus-5-5',
+  messages,
+  tools,
+  budget: budget({ maxSteps: 100, maxDollars: 10 }),
+  context: contextManager({
+    summarizer: { adapter, model: 'claude-opus-5-5' },
+    contextWindow: 200_000,
+    pricing: anthropicPricing['claude-opus-5-5']!,
+  }),
 });
 ```
 
-## Stop conditions
-
-The agent loop exits when:
-1. The model returns a response with no tool calls (`stopReason !== 'tool_call'`) → `{ ok: true }`
-2. `budget` is exhausted → `{ ok: false, error: BudgetExhausted }`
-3. `maxSteps` is reached → `{ ok: false, error: FlintError('agent.max_steps_exceeded') }`
-4. `signal` is aborted → `{ ok: false, error: AdapterError }`
-5. Any `call()` returns an error → `{ ok: false, error }` (propagated)
+See [Context management](/features/context) for when compaction pays off.
 
 ## Multi-turn continuation
 
-Start from a prior conversation by passing the existing message history:
+Continue from a finished run by appending to `output.messages`:
 
 ```ts
-const existingHistory: Message[] = [
-  { role: 'user', content: 'What files are in this directory?' },
-  { role: 'assistant', content: '', toolCalls: [{ id: 'tc1', name: 'list_files', arguments: {} }] },
-  { role: 'tool', content: '["README.md", "package.json"]', toolCallId: 'tc1' },
-  { role: 'assistant', content: 'The directory contains README.md and package.json.' },
-];
-
-const res = await agent({
-  adapter,
-  model: 'claude-opus-4-7',
-  messages: [...existingHistory, { role: 'user', content: 'Read the README' }],
-  tools: [readFileTool],
-  budget: budget({ maxSteps: 5 }),
-});
+const first = await agent({ adapter, model, messages, tools, budget: b });
+if (first.ok) {
+  const second = await agent({
+    adapter,
+    model,
+    messages: [...first.value.messages, { role: 'user', content: 'Now read the README' }],
+    tools,
+    budget: b,
+  });
+}
 ```
+
+To resume after a crash, rebuild the transcript from an event log with `transcriptFrom()` — see [Event log & resume](/features/events#crash-resume).
 
 ## See also
 
+- [Event log & resume](/features/events) — events, JSONL persistence, crash resume, tracing
+- [Context management](/features/context) — `contextManager()`
 - [call()](/primitives/call) — single-step variant
 - [Budget](/features/budget) — required — step/token/dollar limits
-- [Compress & Pipeline](/features/compress) — `compress` option for context management
-- [Testing](/guide/testing) — testing agent loops with scriptedAdapter
+- [Testing](/guide/testing) — scripted adapters and record/replay
